@@ -155,13 +155,20 @@ test("the packed workflow contract is locked to pi-subagent 0.7.2 durable APIs",
 		readFileSync(new URL("../../package-lock.json", import.meta.url), "utf8"),
 		"package-lock.json",
 	);
-	assert.equal(packageJson.dependencies["@agwab/pi-subagent"], "^0.7.2");
+	// This fork bundles pi-subagent 0.7.2 plus its native Windows fixes from
+	// hobby-programmer-5000/pi-subagent (branch windows-support). Git
+	// dependencies carry no registry integrity, so the lockfile pins the
+	// exact commit instead.
+	assert.equal(
+		packageJson.dependencies["@agwab/pi-subagent"],
+		"github:hobby-programmer-5000/pi-subagent#windows-support",
+	);
 	assert.ok(packageJson.bundleDependencies.includes("@agwab/pi-subagent"));
 	const locked = packageLock.packages["node_modules/@agwab/pi-subagent"];
 	assert.equal(locked.version, "0.7.2");
-	assert.equal(
-		locked.integrity,
-		"sha512-LeQu4YBtJWYne7IkZEI+RH79GrobzVZzp+eYdlelXuI+XccXxQLQzMM6fKB01xkF31nBbIuOczRNCq/jRKQHvQ==",
+	assert.match(
+		locked.resolved,
+		/^git\+ssh:\/\/git@github\.com\/hobby-programmer-5000\/pi-subagent\.git#[0-9a-f]{40}$/u,
 	);
 	assert.equal(locked.inBundle, true);
 	const api = await import("@agwab/pi-subagent/api");
