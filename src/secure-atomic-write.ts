@@ -12,7 +12,7 @@ import {
 	stat,
 	type FileHandle,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, parse, resolve, sep } from "node:path";
 
 let tempSuffixForTests: (() => string) | undefined;
 let beforeRenameForTests:
@@ -41,6 +41,17 @@ const PRIVATE_FILE =
 	constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NOFOLLOW;
 
 /**
+ * Native Windows has no O_NOFOLLOW, and Node's open() follows symlinks and
+ * junctions. The win32 branch keeps the same containment goal by refusing a
+ * link before each open and then requiring the opened handle's identity to
+ * match the lstat identity of the name (a followed link has a different
+ * identity). NTFS file IDs can exceed Number.MAX_SAFE_INTEGER, so win32
+ * identity checks use bigint stats. POSIX behaviour is unchanged.
+ */
+const IS_WIN32 = process.platform === "win32";
+const IDENTITY_STAT = { bigint: IS_WIN32 } as const;
+
+/**
  * Open every ancestor with O_NOFOLLOW, retain all descriptors during
  * traversal, and retain the destination descriptor during publication. Path
  * operations are paired with descriptor/name identity checks.
@@ -49,7 +60,7 @@ export async function ensurePrivateDirectory(path: string): Promise<void> {
 	const directory = await openPrivateDirectory(path, true);
 	try {
 		await assertNamedDirectory(directory);
-		await directory.handle.chmod(0o700);
+		await chmodPrivateDirectory(directory.handle);
 		await directory.handle.sync().catch(ignoreDirectorySyncError);
 	} finally {
 		await directory.handle.close().catch(() => undefined);
@@ -69,6 +80,7 @@ export async function readPrivateFileText(
 	let file: FileHandle | undefined;
 	try {
 		await assertNamedDirectory(parent);
+		await assertNotLinkBeforeOpen(target);
 		file = await open(
 			target,
 			constants.O_RDONLY | NOFOLLOW | constants.O_NONBLOCK,
@@ -152,6 +164,7 @@ export async function appendPrivateFile(
 	let file: FileHandle | undefined;
 	try {
 		await assertNamedDirectory(parent);
+		await assertNotLinkBeforeOpen(target);
 		file = await open(target, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | NOFOLLOW, 0o600);
 		await assertSingleRegularFile(file, target);
 		await file.chmod(0o600);
@@ -193,6 +206,7 @@ export async function writePrivateFileAtomic(
 		await assertNamedDirectory(parent);
 		await rename(tmp, join(parent.namedPath, basename(absolute)));
 		const publishedPath = join(parent.namedPath, basename(absolute));
+		await assertNotLinkBeforeOpen(publishedPath);
 		const published = await open(publishedPath, constants.O_RDONLY | NOFOLLOW);
 		try {
 			await assertSingleRegularFile(published, publishedPath);
@@ -224,9 +238,10 @@ export async function publishPrivateGenerationDirectory(
 	try {
 		await assertNamedDirectory(parent);
 		await mkdir(temporary, { mode: 0o700 });
+		await assertNotLinkBeforeOpen(temporary);
 		generation = await open(temporary, READ_DIRECTORY);
 		await assertDirectoryHandleMatchesPath(generation, temporary);
-		await generation.chmod(0o700);
+		await chmodPrivateDirectory(generation);
 		const owner = await open(join(temporary, ownerName), PRIVATE_FILE, 0o600);
 		try {
 			await owner.writeFile(ownerContent);
@@ -242,6 +257,7 @@ export async function publishPrivateGenerationDirectory(
 		// destination created while the generation was being prepared.
 		await assertDestinationAbsent(parent, basename(absolute));
 		await rename(temporary, join(parent.namedPath, basename(absolute)));
+		await assertNotLinkBeforeOpen(join(parent.namedPath, basename(absolute)));
 		const published = await open(join(parent.namedPath, basename(absolute)), READ_DIRECTORY);
 		await published.close().catch(() => undefined);
 		await parent.handle.sync().catch(ignoreDirectorySyncError);
@@ -307,7 +323,7 @@ async function openPrivateParent(path: string): Promise<OpenDirectory> {
 	const parent = await openPrivateDirectory(dirname(absolute), true);
 	try {
 		await assertNamedDirectory(parent);
-		if (parent.namedPath !== sep) await parent.handle.chmod(0o700);
+		if (parent.namedPath !== sep) await chmodPrivateDirectory(parent.handle);
 		return parent;
 	} catch (error) {
 		await parent.handle.close().catch(() => undefined);
@@ -320,16 +336,17 @@ async function openPrivateDirectory(
 	create: boolean,
 ): Promise<OpenDirectory> {
 	const absolute = resolve(path);
-	if (process.platform === "win32" || constants.O_NOFOLLOW === undefined) {
+	if (!IS_WIN32 && constants.O_NOFOLLOW === undefined) {
 		throw new Error("secure filesystem containment is unavailable on this platform");
 	}
 	const canonical = await canonicalDirectoryPath(absolute);
+	const root = filesystemRoot(canonical);
 	const opened: Array<{ handle: FileHandle; path: string }> = [
-		{ handle: await open(sep, READ_DIRECTORY), path: sep },
+		{ handle: await open(root, READ_DIRECTORY), path: root },
 	];
-	let currentPath: string = sep;
+	let currentPath: string = root;
 	try {
-		for (const component of canonical.slice(1).split(sep).filter(Boolean)) {
+		for (const component of pathComponentsBelowRoot(canonical, root)) {
 			const nextPath = join(currentPath, component);
 			if (create) {
 				try {
@@ -338,6 +355,7 @@ async function openPrivateDirectory(
 					if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 				}
 			}
+			await assertNotLinkBeforeOpen(nextPath);
 			const next = await open(nextPath, READ_DIRECTORY);
 			await assertDirectoryHandleMatchesPath(next, nextPath);
 			opened.push({ handle: next, path: nextPath });
@@ -376,9 +394,11 @@ async function canonicalDirectoryPath(path: string): Promise<string> {
 	}
 	// Do not silently canonicalize an attacker-controlled symlink. macOS
 	// exposes /var as a system symlink, so that one stable platform alias is
-	// accepted; all application ancestors must be real directories.
-	let cursor: string = sep;
-	for (const component of existing.slice(1).split(sep).filter(Boolean)) {
+	// accepted; all application ancestors must be real directories. On win32,
+	// junctions report as symbolic links and are refused the same way.
+	const root = filesystemRoot(existing);
+	let cursor: string = root;
+	for (const component of pathComponentsBelowRoot(existing, root)) {
 		cursor = join(cursor, component);
 		const info = await lstat(cursor);
 		if (info.isSymbolicLink() && !isAllowedSystemDirectoryAlias(cursor))
@@ -391,19 +411,54 @@ function isAllowedSystemDirectoryAlias(path: string): boolean {
 	return process.platform === "darwin" && (path === "/var" || path === "/tmp");
 }
 
+/** POSIX root is `/`; win32 root is the drive (`C:\`) or UNC share root. */
+function filesystemRoot(path: string): string {
+	return IS_WIN32 ? parse(path).root : sep;
+}
+
+function pathComponentsBelowRoot(path: string, root: string): string[] {
+	return path.slice(root.length).split(sep).filter(Boolean);
+}
+
+/**
+ * win32 stand-in for O_NOFOLLOW: refuse a symlink or junction at the name
+ * before opening it. The post-open identity check still catches a link that
+ * appears between this lstat and the open. No-op on POSIX, where O_NOFOLLOW
+ * already refuses the final component.
+ */
+async function assertNotLinkBeforeOpen(path: string): Promise<void> {
+	if (!IS_WIN32) return;
+	try {
+		if ((await lstat(path)).isSymbolicLink())
+			throw new Error("secure path must not be a symlink or junction");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+	}
+}
+
+/**
+ * Windows grants access through inherited ACLs, not mode bits, and fchmod on
+ * a directory handle fails with EPERM there. Privacy on win32 therefore relies
+ * on the ACL inherited from the containing user/project directory.
+ */
+async function chmodPrivateDirectory(handle: FileHandle): Promise<void> {
+	if (IS_WIN32) return;
+	await handle.chmod(0o700);
+}
+
 async function assertDirectoryHandleMatchesPath(
 	directory: FileHandle,
 	path: string,
 ): Promise<void> {
-	const opened = await directory.stat();
-	const named = await lstat(path);
+	const opened = await directory.stat(IDENTITY_STAT);
+	const named = await lstat(path, IDENTITY_STAT);
 	if (!opened.isDirectory() || !sameIdentity(opened, named))
 		throw new Error("secure directory changed during write");
 }
 
 async function assertNamedDirectory(directory: OpenDirectory): Promise<void> {
-	const opened = await directory.handle.stat();
-	const named = await stat(directory.namedPath);
+	const opened = await directory.handle.stat(IDENTITY_STAT);
+	const named = await stat(directory.namedPath, IDENTITY_STAT);
 	if (!opened.isDirectory() || !sameIdentity(opened, named)) {
 		throw new Error("secure directory changed during write");
 	}
@@ -425,16 +480,16 @@ async function assertSingleRegularFile(
 	file: FileHandle,
 	path: string,
 ): Promise<void> {
-	const opened = await file.stat();
-	const named = await lstat(path);
+	const opened = await file.stat(IDENTITY_STAT);
+	const named = await lstat(path, IDENTITY_STAT);
 	if (!opened.isFile() || !sameIdentity(opened, named))
 		throw new Error("secure path is not a stable regular file");
-	if (opened.nlink !== 1) throw new Error("private file must not be hard-linked");
+	if (Number(opened.nlink) !== 1) throw new Error("private file must not be hard-linked");
 }
 
 function sameIdentity(
-	left: { dev: number; ino: number },
-	right: { dev: number; ino: number },
+	left: { dev: number | bigint; ino: number | bigint },
+	right: { dev: number | bigint; ino: number | bigint },
 ): boolean {
 	return left.dev === right.dev && left.ino === right.ino;
 }
