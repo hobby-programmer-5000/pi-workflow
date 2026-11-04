@@ -1086,7 +1086,12 @@ export async function writeJsonAtomic(
 }
 
 export async function syncFileAndDirectory(file: string): Promise<void> {
-	const fileHandle = await open(file, fsConstants.O_RDONLY);
+	// Windows FlushFileBuffers needs write access, so fsync on a read-only
+	// handle fails with EPERM there. POSIX keeps the read-only open.
+	const fileHandle = await open(
+		file,
+		process.platform === "win32" ? "r+" : fsConstants.O_RDONLY,
+	);
 	try {
 		await fileHandle.sync();
 	} finally {
@@ -1094,7 +1099,7 @@ export async function syncFileAndDirectory(file: string): Promise<void> {
 	}
 	const directoryHandle = await open(dirname(file), fsConstants.O_RDONLY);
 	try {
-		await directoryHandle.sync();
+		await syncDirectoryHandle(directoryHandle);
 	} finally {
 		await directoryHandle.close();
 	}
