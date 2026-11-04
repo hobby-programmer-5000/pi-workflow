@@ -6,6 +6,7 @@ import {
 	open,
 	readFile,
 	realpath,
+	stat,
 	type FileHandle,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
@@ -15,6 +16,8 @@ import {
 	EXPERIMENTAL_TOOL_DEDUP_ENV,
 	workflowExperimentalFlagEnabled,
 } from "./experimental-speed-flags.js";
+
+const IS_WIN32 = process.platform === "win32";
 import { stringifyPromptJson } from "./prompt-json.js";
 import { isSimpleJsonPath, readSimpleJsonPath } from "./workflow-runtime.js";
 
@@ -495,7 +498,9 @@ async function openValidatedArtifactFile(options: {
 	if (linkStat.isSymbolicLink()) {
 		throw new Error(`workflow artifact must not be a symlink: ${options.label}`);
 	}
-	const validatedStat = await rawStat(options.artifactPath);
+	// win32: rawStat makes NTFS file IDs (> 2^53) comparable. POSIX keeps the
+	// original stat call.
+	const validatedStat = IS_WIN32 ? await rawStat(options.artifactPath) : await stat(options.artifactPath);
 	if (!validatedStat.isFile()) {
 		throw new Error(
 			`workflow artifact is not a regular file: ${options.label}`,
@@ -556,7 +561,7 @@ async function openValidatedArtifactFile(options: {
 				if (JSON.stringify(await readRawIntegrity(owner)) !== JSON.stringify(integrity)) throw new Error("raw artifact integrity record changed");
 				if (fileStat.nlink > 1) await checkRawLinks(owner, await rawFstat(file));
 			}
-			if (!sameRawVersion(fileStat, await rawFstat(file)) || !sameRawVersion(fileStat, await rawLstat(options.artifactPath))) throw new Error("workflow artifact changed during read");
+			if (!sameRawVersion(fileStat, await rawFstat(file)) || !sameRawVersion(fileStat, IS_WIN32 ? await rawLstat(options.artifactPath) : await lstat(options.artifactPath))) throw new Error("workflow artifact changed during read");
 		} };
 	} catch (error) {
 		await file.close();

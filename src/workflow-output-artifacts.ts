@@ -3,7 +3,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { constants as fsConstants } from "node:fs";
-import { link, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
 import { assertSafeRawTaskDirectory, checkRawLinks, establishRawOwner, matchesRawDescriptor, rawDigest, rawFileVersion, rawFstat, rawLstat, recheckRawOwner, sameInode, sameRawVersion, type RawIntegrity, type RawOwner } from "./workflow-raw-contract.js";
 import { dirname, join, resolve } from "node:path";
 
@@ -15,6 +15,9 @@ import { isSensitiveWorkflowQueryKey, redactSensitiveWorkflowText } from "./work
 // request-based path below so DNS resolution is under our control.
 const defaultRefValidationFetch = globalThis.fetch;
 const runningUnderNodeTest = process.env.NODE_TEST_CONTEXT !== undefined;
+// win32: rawLstat makes NTFS file IDs (> 2^53) comparable. POSIX keeps the
+// original lstat calls.
+const IS_WIN32 = process.platform === "win32";
 
 import {
 	validateStructuredContract,
@@ -2591,7 +2594,7 @@ async function writeRawArtifact(file: string, value: string, owner?: RawOwner): 
 	if (owner) {
 		const temp = join(dirname(file), `.raw-${randomBytes(12).toString("hex")}.tmp`);
 		try {
-			const before = await rawLstat(owner.output);
+			const before = IS_WIN32 ? await rawLstat(owner.output) : await lstat(owner.output);
 			if (!before.isFile() || before.size !== expected.length) throw new Error("raw source mismatch");
 			await checkRawLinks(owner, before, false);
 			const source = await open(owner.output, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
@@ -2605,7 +2608,7 @@ async function writeRawArtifact(file: string, value: string, owner?: RawOwner): 
 				const linked = await open(temp, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
 				try {
 					const info = await rawFstat(linked);
-					if (!sameInode(before, info) || before.size !== info.size || before.mtimeMs !== info.mtimeMs || !sameRawVersion(info, await rawFstat(linked)) || !sameRawVersion(info, await rawLstat(owner.output))) throw new Error("raw linked source changed");
+					if (!sameInode(before, info) || before.size !== info.size || before.mtimeMs !== info.mtimeMs || !sameRawVersion(info, await rawFstat(linked)) || !sameRawVersion(info, IS_WIN32 ? await rawLstat(owner.output) : await lstat(owner.output))) throw new Error("raw linked source changed");
 					await recheckRawOwner(owner);
 					await rename(temp, file);
 					await emitWorkflowOutputArtifactWriteHook({ phase: "after", file });
