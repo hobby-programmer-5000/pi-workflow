@@ -6,11 +6,10 @@ import {
 	open,
 	readFile,
 	realpath,
-	stat,
 	type FileHandle,
 } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { assertNoRawIntegrityAnchor, checkRawLinks, establishRawOwner, hashRawDescriptor, rawDigest, readRawIntegrity, recheckRawOwner, sameRawVersion, type RawOwner, type RawIntegrity, type RawSourceTuple } from "./workflow-raw-contract.js";
+import { assertNoRawIntegrityAnchor, checkRawLinks, establishRawOwner, hashRawDescriptor, rawDigest, rawFstat, rawLstat, rawStat, readRawIntegrity, recheckRawOwner, sameRawVersion, type RawOwner, type RawIntegrity, type RawSourceTuple } from "./workflow-raw-contract.js";
 
 import {
 	EXPERIMENTAL_TOOL_DEDUP_ENV,
@@ -496,7 +495,7 @@ async function openValidatedArtifactFile(options: {
 	if (linkStat.isSymbolicLink()) {
 		throw new Error(`workflow artifact must not be a symlink: ${options.label}`);
 	}
-	const validatedStat = await stat(options.artifactPath);
+	const validatedStat = await rawStat(options.artifactPath);
 	if (!validatedStat.isFile()) {
 		throw new Error(
 			`workflow artifact is not a regular file: ${options.label}`,
@@ -531,7 +530,7 @@ async function openValidatedArtifactFile(options: {
 		fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW,
 	);
 	try {
-		const fileStat = await file.stat();
+		const fileStat = await rawFstat(file);
 		if (fileStat.nlink > 1) {
 			if (!owner) throw new Error(`workflow artifact must not be hard-linked: ${options.label}`);
 			await checkRawLinks(owner, fileStat);
@@ -555,9 +554,9 @@ async function openValidatedArtifactFile(options: {
 			if (owner) {
 				await recheckRawOwner(owner);
 				if (JSON.stringify(await readRawIntegrity(owner)) !== JSON.stringify(integrity)) throw new Error("raw artifact integrity record changed");
-				if (fileStat.nlink > 1) await checkRawLinks(owner, await file.stat());
+				if (fileStat.nlink > 1) await checkRawLinks(owner, await rawFstat(file));
 			}
-			if (!sameRawVersion(fileStat, await file.stat()) || !sameRawVersion(fileStat, await lstat(options.artifactPath))) throw new Error("workflow artifact changed during read");
+			if (!sameRawVersion(fileStat, await rawFstat(file)) || !sameRawVersion(fileStat, await rawLstat(options.artifactPath))) throw new Error("workflow artifact changed during read");
 		} };
 	} catch (error) {
 		await file.close();

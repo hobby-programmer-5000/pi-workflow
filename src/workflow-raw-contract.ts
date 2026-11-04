@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { constants, type Stats } from "node:fs";
-import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
+import { constants, type BigIntStats, type Stats } from "node:fs";
+import { lstat, open, realpath, stat, type FileHandle } from "node:fs/promises";
 import { basename, dirname, join, posix, relative, resolve, sep, type PlatformPath, win32 } from "node:path";
 import { hasNonSpawnableWorkflowLaunchAuthority } from "./launch-authority.js";
 import { workflowTaskAttemptIdentity, workflowTaskSessionId } from "./launch-session.js";
@@ -166,6 +166,46 @@ export const sameInode = (a: RawFileVersion, b: RawFileVersion): boolean =>
 export const sameRawVersion = (a: RawFileVersion, b: RawFileVersion): boolean =>
 	sameInode(a, b) && a.size === b.size && a.nlink === b.nlink && a.mtimeMs === b.mtimeMs && a.ctimeMs === b.ctimeMs;
 
+const IS_WIN32 = process.platform === "win32";
+const SAFE_INO_MASK = (1n << 53n) - 1n;
+
+/**
+ * NTFS file IDs are a 48-bit MFT record number with a 16-bit reuse sequence
+ * in the high bits, so they routinely exceed Number.MAX_SAFE_INTEGER, and
+ * Number rounding destroys the low (record-number) bits first: distinct live
+ * files can then share a rounded ID. On win32, keep the low 53 bits of the
+ * bigint ID instead: the full record number (unique among live files on a
+ * volume) plus the low sequence bits, as a safe integer that still persists
+ * as a plain number. Both stat calls must agree on the rounded ID, so a swap
+ * between them fails closed. POSIX returns the Stats unchanged.
+ */
+function withWin32SafeIno(info: Stats, big: BigIntStats): Stats {
+	if (Number(big.ino) !== info.ino || Number(big.dev) !== info.dev) fail();
+	// A wrapped or instrumented stat may ignore { bigint: true }; a number ino
+	// is then already the best available identity.
+	const bigIno: bigint | number = big.ino;
+	info.ino = typeof bigIno === "bigint" ? Number(bigIno & SAFE_INO_MASK) : bigIno;
+	return info;
+}
+
+/** lstat whose ino is comparable by sameInode/sameRawVersion on every platform. */
+export async function rawLstat(path: string): Promise<Stats> {
+	const info = await lstat(path);
+	return IS_WIN32 ? withWin32SafeIno(info, await lstat(path, { bigint: true })) : info;
+}
+
+/** stat (following the final link) with a comparable ino; see rawLstat. */
+export async function rawStat(path: string): Promise<Stats> {
+	const info = await stat(path);
+	return IS_WIN32 ? withWin32SafeIno(info, await stat(path, { bigint: true })) : info;
+}
+
+/** fstat with a comparable ino; see rawLstat. */
+export async function rawFstat(file: FileHandle): Promise<Stats> {
+	const info = await file.stat();
+	return IS_WIN32 ? withWin32SafeIno(info, await file.stat({ bigint: true })) : info;
+}
+
 async function directoryChain(project: string, path: string, identities: Map<string, Stats>): Promise<void> {
 	const rel = relative(project, path);
 	if (rel.startsWith("..") || resolve(project, rel) !== path) fail();
@@ -173,7 +213,7 @@ async function directoryChain(project: string, path: string, identities: Map<str
 	for (const part of ["", ...rel.split(sep).filter(Boolean)]) {
 		if (part) current = join(current, part);
 		if (identities.has(current)) continue;
-		const info = await lstat(current);
+		const info = await rawLstat(current);
 		if (!info.isDirectory() || info.isSymbolicLink()) fail();
 		identities.set(current, info);
 	}
@@ -184,13 +224,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 async function metadata(path: string, snapshots?: Map<string, Stats>): Promise<Record<string, unknown>> {
-	const before = await lstat(path);
+	const before = await rawLstat(path);
 	if (!before.isFile() || before.nlink !== 1) fail();
 	const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
 	try {
-		if (!sameRawVersion(before, await file.stat())) fail();
+		if (!sameRawVersion(before, await rawFstat(file))) fail();
 		const value = JSON.parse(await file.readFile("utf8"));
-		if (!sameRawVersion(before, await file.stat()) || !sameRawVersion(before, await lstat(path))) fail();
+		if (!sameRawVersion(before, await rawFstat(file)) || !sameRawVersion(before, await rawLstat(path))) fail();
 		if (!value || typeof value !== "object" || Array.isArray(value)) fail();
 		snapshots?.set(path, before);
 		return value;
@@ -363,7 +403,7 @@ export async function establishRawOwner(taskDirectory: string, expected?: RawSel
 		// Only a HOST anchor can supply this bounded identity. A result-sidecar
 		// hash never supplies authority. Legacy still checks its terminal record.
 		const terminalPath = join(attemptDir, "result.json");
-		const terminalStat = await lstat(terminalPath);
+		const terminalStat = await rawLstat(terminalPath);
 		const anchor = task.rawArtifactIntegrity;
 		const terminal = anchor?.terminal && anchor.terminalVersion && terminalStat.isFile() && terminalStat.nlink === 1 && sameRawVersion(anchor.terminalVersion, terminalStat)
 			? anchor.terminal
@@ -397,11 +437,11 @@ export async function recheckRawOwner(owner: RawOwner): Promise<void> {
 	// Per-operation snapshots, never a cross-read cache: every root inode and
 	// every metadata version is freshly checked at each fence. Reparse changes.
 	await Promise.all([...owner.directories].map(async ([path, before]) => {
-		const current = await lstat(path);
+		const current = await rawLstat(path);
 		if (!current.isDirectory() || current.isSymbolicLink() || !sameInode(before, current)) fail();
 		return undefined;
 	}));
-	const unchanged = await Promise.all([...owner.metadata].map(async ([path, before]) => sameRawVersion(before, await lstat(path))));
+	const unchanged = await Promise.all([...owner.metadata].map(async ([path, before]) => sameRawVersion(before, await rawLstat(path))));
 	if (unchanged.every(Boolean)) return;
 	const current = await establishRawOwner(owner.taskDir, owner.selection);
 	if (current.identity !== owner.identity || JSON.stringify(current.integrity) !== JSON.stringify(owner.integrity) || current.directories.size !== owner.directories.size) fail();
@@ -413,7 +453,7 @@ export async function checkRawLinks(owner: RawOwner, info: Stats, includeRaw = t
 	const names = [owner.output, ...(owner.attempt ? [owner.attempt] : []), ...(includeRaw ? [owner.raw] : [])];
 	let count = 0;
 	for (const path of names) {
-		const candidate = await lstat(path);
+		const candidate = await rawLstat(path);
 		if (!candidate.isFile() || candidate.isSymbolicLink()) fail();
 		if (sameInode(candidate, info)) count++;
 		else if (path === owner.output || path === owner.raw) fail();
@@ -439,7 +479,7 @@ export async function assertNoRawIntegrityAnchor(taskDirectory: string): Promise
 export async function readRawIntegrity(owner: RawOwner): Promise<RawIntegrity | undefined> {
 	const path = join(owner.taskDir, "result.json");
 	const previous = owner.metadata.get(path);
-	if (owner.resultValidated && previous && sameRawVersion(previous, await lstat(path))) return owner.integrity;
+	if (owner.resultValidated && previous && sameRawVersion(previous, await rawLstat(path))) return owner.integrity;
 	const result = await metadata(path, owner.metadata);
 	if (result.schema !== "workflow-task-result-v1" || !isRecord(result.outputValidation) || result.outputValidation.valid !== true || !isRecord(result.artifacts) || result.artifacts.raw !== "raw.md") fail();
 	const record = result.rawIntegrity;

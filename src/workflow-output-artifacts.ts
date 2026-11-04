@@ -3,8 +3,8 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { constants as fsConstants } from "node:fs";
-import { link, lstat, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
-import { assertSafeRawTaskDirectory, checkRawLinks, establishRawOwner, matchesRawDescriptor, rawDigest, rawFileVersion, recheckRawOwner, sameInode, sameRawVersion, type RawIntegrity, type RawOwner } from "./workflow-raw-contract.js";
+import { link, mkdir, open, rename, unlink, writeFile } from "node:fs/promises";
+import { assertSafeRawTaskDirectory, checkRawLinks, establishRawOwner, matchesRawDescriptor, rawDigest, rawFileVersion, rawFstat, rawLstat, recheckRawOwner, sameInode, sameRawVersion, type RawIntegrity, type RawOwner } from "./workflow-raw-contract.js";
 import { dirname, join, resolve } from "node:path";
 
 import { nonPublicIpReason } from "./workflow-network-policy.js";
@@ -2591,29 +2591,29 @@ async function writeRawArtifact(file: string, value: string, owner?: RawOwner): 
 	if (owner) {
 		const temp = join(dirname(file), `.raw-${randomBytes(12).toString("hex")}.tmp`);
 		try {
-			const before = await lstat(owner.output);
+			const before = await rawLstat(owner.output);
 			if (!before.isFile() || before.size !== expected.length) throw new Error("raw source mismatch");
 			await checkRawLinks(owner, before, false);
 			const source = await open(owner.output, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
 			try {
 				// Content is verified on the linked descriptor below, not in a
 				// redundant compare-before-link pass vulnerable to source mutation.
-				if (!sameRawVersion(before, await source.stat())) throw new Error("raw source changed");
+				if (!sameRawVersion(before, await rawFstat(source))) throw new Error("raw source changed");
 				await taskArtifactLinkForTests?.(owner.output, file);
 				await emitWorkflowOutputArtifactWriteHook({ phase: "before", file });
 				await link(owner.output, temp);
 				const linked = await open(temp, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
 				try {
-					const info = await linked.stat();
-					if (!sameInode(before, info) || before.size !== info.size || before.mtimeMs !== info.mtimeMs || !sameRawVersion(info, await linked.stat()) || !sameRawVersion(info, await lstat(owner.output))) throw new Error("raw linked source changed");
+					const info = await rawFstat(linked);
+					if (!sameInode(before, info) || before.size !== info.size || before.mtimeMs !== info.mtimeMs || !sameRawVersion(info, await rawFstat(linked)) || !sameRawVersion(info, await rawLstat(owner.output))) throw new Error("raw linked source changed");
 					await recheckRawOwner(owner);
 					await rename(temp, file);
 					await emitWorkflowOutputArtifactWriteHook({ phase: "after", file });
-					const after = await linked.stat();
+					const after = await rawFstat(linked);
 					await checkRawLinks(owner, after);
 					// rename may change ctime itself. Verify authoritative bytes after
 					// publication as well as inode/link/size and write timestamps.
-					if (!sameInode(info, after) || info.size !== after.size || info.nlink !== after.nlink || info.mtimeMs !== after.mtimeMs || !await matchesRawDescriptor(linked, expected) || !sameRawVersion(after, await linked.stat())) throw new Error("raw publication changed");
+					if (!sameInode(info, after) || info.size !== after.size || info.nlink !== after.nlink || info.mtimeMs !== after.mtimeMs || !await matchesRawDescriptor(linked, expected) || !sameRawVersion(after, await rawFstat(linked))) throw new Error("raw publication changed");
 				} finally { await linked.close(); }
 			} finally { await source.close(); }
 			await recheckRawOwner(owner);
