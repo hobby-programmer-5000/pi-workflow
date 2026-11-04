@@ -1929,6 +1929,10 @@ async function reapStaleSourceIndexLock(
 				currentOwner.dev !== owner.dev || currentOwner.ino !== owner.ino ||
 				currentValue.ownerId !== value.ownerId || currentValue.generation !== value.generation) return;
 			const tombstone = `${lockDir}.releasing-${randomUUID()}`;
+			// Windows refuses to rename a directory while a file inside it is
+			// open (EPERM); the guard file's presence is what matters, so close
+			// its handle first there. POSIX keeps it open across the rename.
+			if (process.platform === "win32") { await guard.close(); guard = undefined; }
 			await rename(lockDir, tombstone);
 			guarded = false;
 			await rm(tombstone, { recursive: true, force: true });
@@ -1965,6 +1969,8 @@ async function releaseSourceIndexLock(
 				guardedOwner.dev !== fence.owner.dev || guardedOwner.ino !== fence.owner.ino ||
 				guardedValue.ownerId !== fence.ownerId || guardedValue.generation !== fence.generation) return;
 			const tombstone = `${lockDir}.releasing-${randomUUID()}`;
+			// See above: close the guard handle before renaming on Windows.
+			if (process.platform === "win32") { await guard.close(); guard = undefined; }
 			await rename(lockDir, tombstone);
 			guarded = false;
 			await rm(tombstone, { recursive: true, force: true });

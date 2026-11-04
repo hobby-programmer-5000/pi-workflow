@@ -1502,6 +1502,17 @@ function randomLockNonce(): string {
 	return `${process.pid}:${Date.now()}:${Math.random()}:${Math.random()}`;
 }
 
+/**
+ * Nonce for use inside a file name. On NTFS a colon names an alternate data
+ * stream, so `.remove-<pid>:<time>:...` is not a file name at all and opening
+ * it fails with ENOENT, which left every guarded release (and the lock) stuck.
+ * POSIX keeps the original nonce.
+ */
+function randomLockFileNonce(): string {
+	const nonce = randomLockNonce();
+	return process.platform === "win32" ? nonce.replaceAll(":", "-") : nonce;
+}
+
 async function captureFetchLockFence(
 	lockDir: string,
 	ownerId: string,
@@ -1540,7 +1551,7 @@ async function releaseWorkflowWebFetchLock(
 		if (!directory.isDirectory() || !sameFetchStat(directory, fence.directory) ||
 			!owner.isFile() || !sameFetchStat(owner, fence.owner) ||
 			current?.ownerId !== fence.ownerId || (current.generation ?? current.ownerId) !== fence.generation) return;
-		const guardPath = resolve(lockDir, `.remove-${randomLockNonce()}`);
+		const guardPath = resolve(lockDir, `.remove-${randomLockFileNonce()}`);
 		let guard: Awaited<ReturnType<typeof open>> | undefined;
 		let guarded = false;
 		try {
@@ -1554,7 +1565,12 @@ async function releaseWorkflowWebFetchLock(
 				guardedValue?.ownerId !== fence.ownerId || (guardedValue.generation ?? guardedValue.ownerId) !== fence.generation) return;
 			// Publish release by renaming the fenced generation away from the
 			// live name; a crash cannot strand an ownerless live lock directory.
-			const tombstone = `${lockDir}.releasing-${randomLockNonce()}`;
+			const tombstone = `${lockDir}.releasing-${randomLockFileNonce()}`;
+			// Windows refuses to rename a directory while a file inside it is
+			// open (EPERM), which left the lock stranded. The guard file's
+			// presence is what keeps the directory non-empty; close its handle
+			// first there. POSIX keeps the handle open across the rename.
+			if (process.platform === "win32") { await guard.close(); guard = undefined; }
 			await rename(lockDir, tombstone);
 			guarded = false;
 			await rm(tombstone, { recursive: true, force: true });
