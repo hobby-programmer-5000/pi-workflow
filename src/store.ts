@@ -253,6 +253,40 @@ function hasPrivateMode(info: { mode: number }, mode: number): boolean {
 	return IS_WIN32 || (info.mode & 0o777) === mode;
 }
 
+const WIN32_REPLACE_RETRY_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+const WIN32_REPLACE_RETRY_LIMIT = 40;
+
+/**
+ * Windows refuses to rename over a file that another process has open
+ * (EPERM/EACCES/EBUSY), and run records are read by the host, the
+ * supervisor and workers concurrently. Those readers hold the file only
+ * briefly, so retry the replace with a short backoff (about 8 s in total,
+ * like graceful-fs). The abort signal is honoured between attempts. POSIX
+ * renames are unchanged.
+ */
+async function renameReplacing(
+	from: string,
+	to: string,
+	abortSignal?: AbortSignal,
+): Promise<void> {
+	if (!IS_WIN32) {
+		await rename(from, to);
+		return;
+	}
+	for (let attempt = 0; ; attempt += 1) {
+		try {
+			await rename(from, to);
+			return;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+			if (!WIN32_REPLACE_RETRY_CODES.has(code ?? "") || attempt >= WIN32_REPLACE_RETRY_LIMIT)
+				throw error;
+		}
+		assertLeaseNotAborted(abortSignal);
+		await new Promise((resolveSleep) => setTimeout(resolveSleep, Math.min(25 * (attempt + 1), 250)));
+	}
+}
+
 async function ensurePhysicalDirectoryComponent(
 	path: string,
 	mode?: number,
@@ -1085,7 +1119,7 @@ export async function writeJsonAtomic(
 		await assertLeaseContextOwnership(lease);
 		await commitFence?.();
 		assertLeaseNotAborted(activeAbortSignal);
-		await rename(temp, file);
+		await renameReplacing(temp, file, activeAbortSignal);
 		temporaryCreated = false;
 		if (lease) {
 			await runLeaseTestHooks.onAfterAtomicRename?.({
