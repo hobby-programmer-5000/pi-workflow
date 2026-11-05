@@ -3,6 +3,8 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { describeScheduleError } from "./schedule-error-detail.mjs";
+
 function usage() {
   return `pi-workflow
 
@@ -208,7 +210,7 @@ async function supervise(argv) {
     for (const run of runs) {
       if (run.status !== "running") continue;
       supervised.add(run.runId);
-      await engine.scheduleRun(cwd, run.runId).catch((error) => log(`schedule error ${run.runId}: ${error?.message ?? error}`));
+      await engine.scheduleRun(cwd, run.runId).catch((error) => log(`schedule error ${run.runId}: ${describeScheduleError(error)}`));
     }
 
     const refreshed = runId ? [await store.readRunRecord(cwd, runId)] : (await store.listRunRecords(cwd)).filter((run) => !run.parentRunId);
