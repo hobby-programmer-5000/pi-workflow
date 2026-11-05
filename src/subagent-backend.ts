@@ -1,3 +1,4 @@
+import { renameReplacing } from "./replace-file.js";
 import { parseAuthoredJson } from "./authored-file-text.js";
 import { randomBytes } from "node:crypto";
 import {
@@ -932,7 +933,9 @@ async function persistSharedModelRateLimitBackoffs(
 					`${JSON.stringify(Object.fromEntries(entries), null, 2)}\n`,
 					"utf8",
 				);
-				await rename(tmpFile, file);
+				// win32: retry while another process briefly holds the file open.
+				if (process.platform === "win32") await renameReplacing(tmpFile, file);
+				else await rename(tmpFile, file);
 			} finally {
 				await rm(tmpFile, { force: true });
 			}
@@ -4551,7 +4554,9 @@ async function writeForeachBatchTextAtomic(
 	await mkdir(dirname(file), { recursive: true });
 	const temporary = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
 	await writeFile(temporary, value, "utf8");
-	await rename(temporary, file);
+	// win32: retry while another process briefly holds the file open.
+	if (process.platform === "win32") await renameReplacing(temporary, file);
+	else await rename(temporary, file);
 }
 
 async function persistTerminalForeachBatchEvidence(

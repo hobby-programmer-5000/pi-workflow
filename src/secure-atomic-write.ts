@@ -1,3 +1,4 @@
+import { renameReplacing } from "./replace-file.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -204,7 +205,14 @@ export async function writePrivateFileAtomic(
 		await beforeRenameForTests?.(absolute, logicalTmp);
 		if (options.signal?.aborted) throw options.signal.reason ?? new Error("aborted");
 		await assertNamedDirectory(parent);
-		await rename(tmp, join(parent.namedPath, basename(absolute)));
+		// win32: retry while another process briefly holds the target open, and
+		// revalidate the parent each time. No O_NOFOLLOW protects this name there.
+		if (IS_WIN32)
+			await renameReplacing(tmp, join(parent.namedPath, basename(absolute)), async () => {
+				await assertNamedDirectory(parent);
+				await assertNotLinkBeforeOpen(join(parent.namedPath, basename(absolute)));
+			});
+		else await rename(tmp, join(parent.namedPath, basename(absolute)));
 		const publishedPath = join(parent.namedPath, basename(absolute));
 		await assertNotLinkBeforeOpen(publishedPath);
 		const published = await open(publishedPath, constants.O_RDONLY | NOFOLLOW);

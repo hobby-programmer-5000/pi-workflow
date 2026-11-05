@@ -1,3 +1,4 @@
+import { renameReplacing } from "./replace-file.js";
 import { randomBytes } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
@@ -2610,7 +2611,10 @@ async function writeRawArtifact(file: string, value: string, owner?: RawOwner): 
 					const info = await rawFstat(linked);
 					if (!sameInode(before, info) || before.size !== info.size || before.mtimeMs !== info.mtimeMs || !sameRawVersion(info, await rawFstat(linked)) || !sameRawVersion(info, IS_WIN32 ? await rawLstat(owner.output) : await lstat(owner.output))) throw new Error("raw linked source changed");
 					await recheckRawOwner(owner);
-					await rename(temp, file);
+					// win32: retry while a reader briefly holds the published name open,
+					// repeating the ownership check that guards this commit.
+					if (IS_WIN32) await renameReplacing(temp, file, () => recheckRawOwner(owner));
+					else await rename(temp, file);
 					await emitWorkflowOutputArtifactWriteHook({ phase: "after", file });
 					const after = await rawFstat(linked);
 					await checkRawLinks(owner, after);
@@ -2954,6 +2958,8 @@ async function writeTextAtomic(file: string, value: string): Promise<void> {
 		`.${Date.now().toString(36)}-${randomBytes(3).toString("hex")}.tmp`,
 	);
 	await writeFile(temp, value, "utf8");
-	await rename(temp, file);
+	// win32: retry while a reader briefly holds the file open.
+	if (IS_WIN32) await renameReplacing(temp, file);
+	else await rename(temp, file);
 	await emitWorkflowOutputArtifactWriteHook({ phase: "after", file });
 }
