@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 import { readFile, readdir, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { describeScheduleError } from "./schedule-error-detail.mjs";
+
+// Set by loadEngineModule. Declared here because commands run from top-level
+// awaits below, before the rest of this module's declarations are reached.
+let sourceEngineLoader;
 
 function usage() {
   return `pi-workflow
@@ -108,11 +113,7 @@ process.stdout.write(`${lines.join("\n")}\n`);
 
 async function notices(argv) {
   try {
-    const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-    const buildDir = await resolveEngineDist(packageRoot);
-    const { executeWorkflowNoticesCommand } = await import(
-      pathToFileURL(join(buildDir, "workflow-notices.js")).href
-    );
+    const { executeWorkflowNoticesCommand } = await loadEngineModule("workflow-notices");
     process.stdout.write(
       `${await executeWorkflowNoticesCommand(process.cwd(), argv)}\n`,
     );
@@ -124,10 +125,8 @@ async function notices(argv) {
 }
 
 async function prune(argv) {
-  const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const buildDir = await resolveEngineDist(packageRoot);
   // Use the same boundary parser as /workflow prune, before any retention IO.
-  const { parseWorkflowPruneArgs } = await import(pathToFileURL(join(buildDir, "extension.js")).href);
+  const { parseWorkflowPruneArgs } = await loadEngineModule("extension");
   let options;
   try { options = parseWorkflowPruneArgs(argv); }
   catch (error) {
@@ -135,7 +134,7 @@ async function prune(argv) {
     return 1;
   }
   const { json, ...retentionOptions } = options;
-  const retention = await import(pathToFileURL(join(buildDir, "run-retention.js")).href);
+  const retention = await loadEngineModule("run-retention");
   const summary = await retention.pruneWorkflowRuns(process.cwd(), retentionOptions);
   process.stdout.write(`${json ? JSON.stringify(summary, null, 2) : retention.formatWorkflowPruneSummary(summary)}\n`);
   return summary.error ? 1 : 0;
@@ -181,11 +180,9 @@ async function supervise(argv) {
     return 1;
   }
 
-  const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-  const buildDir = await resolveEngineDist(packageRoot);
-  const engine = await import(pathToFileURL(join(buildDir, "engine.js")).href);
-  const store = await import(pathToFileURL(join(buildDir, "store.js")).href);
-  const processRole = await import(pathToFileURL(join(buildDir, "process-role.js")).href);
+  const engine = await loadEngineModule("engine");
+  const store = await loadEngineModule("store");
+  const processRole = await loadEngineModule("process-role");
   processRole.assertWorkflowActionAllowedForRole("supervise");
 
   const cwd = process.cwd();
@@ -247,6 +244,31 @@ async function supervise(argv) {
 
 function log(message) {
   process.stdout.write(`[supervise ${new Date().toISOString()}] ${message}\n`);
+}
+
+/**
+ * Load an engine module from the compiled build when there is one. A package
+ * installed from git has no dist/ (it is not committed) and no TypeScript to
+ * build it with, but the Pi extension already runs from src/ there, so the CLI
+ * loads the same sources through jiti, bundled via pi-subagent. One jiti
+ * instance is shared so that all modules see the same state.
+ */
+async function loadEngineModule(name) {
+  const packageRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const compiled = join(packageRoot, "dist", `${name}.js`);
+  const hasBuild = await stat(join(packageRoot, "dist", "engine.js")).then((info) => info.isFile(), () => false);
+  if (hasBuild) return await import(pathToFileURL(compiled).href);
+
+  const source = join(packageRoot, "src", `${name}.ts`);
+  const hasSource = await stat(source).then((info) => info.isFile(), () => false);
+  if (!hasSource) await resolveEngineDist(packageRoot);
+  if (sourceEngineLoader === undefined) {
+    const require = createRequire(join(packageRoot, "node_modules", "@agwab", "pi-subagent", "package.json"));
+    const jiti = await import(pathToFileURL(require.resolve("jiti")).href);
+    const createJiti = jiti.createJiti ?? jiti.default?.createJiti ?? jiti.default;
+    sourceEngineLoader = createJiti(import.meta.url, { interopDefault: false });
+  }
+  return await sourceEngineLoader.import(source);
 }
 
 async function resolveEngineDist(packageRoot) {
