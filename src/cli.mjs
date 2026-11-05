@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { findHostPiPackageRoot, hostPiPackageAliases } from "./host-pi-packages.mjs";
 import { describeScheduleError } from "./schedule-error-detail.mjs";
 
 // Set by loadEngineModule. Declared here because commands run from top-level
@@ -263,10 +264,21 @@ async function loadEngineModule(name) {
   const hasSource = await stat(source).then((info) => info.isFile(), () => false);
   if (!hasSource) await resolveEngineDist(packageRoot);
   if (sourceEngineLoader === undefined) {
+    // A git install has no copy of the packages Pi provides.
+    const hasHostPackages = await stat(join(packageRoot, "node_modules", "@earendil-works", "pi-ai")).then(() => true, () => false);
+    let alias = {};
+    if (!hasHostPackages) {
+      const piRoot = findHostPiPackageRoot();
+      if (piRoot === undefined)
+        throw new Error("pi-workflow could not find the Pi installation it runs with. Put the `pi` command on PATH, or start the run from Pi with --detach.");
+      alias = hostPiPackageAliases(piRoot);
+      // Tasks this process launches need the same Pi.
+      process.env.PI_SUBAGENT_PI_PACKAGE_ROOT = piRoot;
+    }
     const require = createRequire(join(packageRoot, "node_modules", "@agwab", "pi-subagent", "package.json"));
     const jiti = await import(pathToFileURL(require.resolve("jiti")).href);
     const createJiti = jiti.createJiti ?? jiti.default?.createJiti ?? jiti.default;
-    sourceEngineLoader = createJiti(import.meta.url, { interopDefault: false });
+    sourceEngineLoader = createJiti(import.meta.url, { interopDefault: false, alias });
   }
   return await sourceEngineLoader.import(source);
 }
