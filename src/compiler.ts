@@ -1,3 +1,4 @@
+import { parseAuthoredJson } from "./authored-file-text.js";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -787,7 +788,7 @@ async function collectForeachPathWarnings(
 		if (schemaCache.has(controlSchema)) return schemaCache.get(controlSchema);
 		let schema: any;
 		try {
-			schema = JSON.parse(await readFile(resolve(specDir, controlSchema), "utf8"));
+			schema = parseAuthoredJson(await readFile(resolve(specDir, controlSchema), "utf8"));
 		} catch {
 			schema = undefined;
 		}
@@ -953,7 +954,7 @@ async function collectSourceProjectionWarnings(
 		if (schemaCache.has(controlSchema)) return schemaCache.get(controlSchema);
 		let schema: any;
 		try {
-			schema = JSON.parse(await readFile(resolve(specDir, controlSchema), "utf8"));
+			schema = parseAuthoredJson(await readFile(resolve(specDir, controlSchema), "utf8"));
 		} catch {
 			schema = undefined;
 		}
@@ -1054,7 +1055,7 @@ async function collectWorkflowQualityWarnings(
 		if (typeof controlSchema !== "string") continue;
 		let schema: any;
 		try {
-			schema = JSON.parse(await readFile(resolve(specDir, controlSchema), "utf8"));
+			schema = parseAuthoredJson(await readFile(resolve(specDir, controlSchema), "utf8"));
 		} catch {
 			continue;
 		}

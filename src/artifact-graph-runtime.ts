@@ -1,3 +1,4 @@
+import { parseAuthoredJson } from "./authored-file-text.js";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -931,7 +932,7 @@ async function readTaskControlJsonSchema(
 	const source = await readFile(schemaPath, "utf8");
 	let schema: unknown;
 	try {
-		schema = JSON.parse(source);
+		schema = parseAuthoredJson(source);
 	} catch (error) {
 		throw new Error(`task ${task.taskId} control schema is not valid JSON`, {
 			cause: error,

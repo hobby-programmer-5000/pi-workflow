@@ -1,3 +1,4 @@
+import { parseAuthoredJson } from "./authored-file-text.js";
 import { readFile, realpath } from "node:fs/promises";
 import { dirname, extname, isAbsolute, relative, resolve } from "node:path";
 
@@ -71,7 +72,7 @@ async function validateArtifactGraphControlSchemaFiles(
 				});
 				continue;
 			}
-			const schema = JSON.parse(await readFile(realSchemaPath, "utf8"));
+			const schema = parseAuthoredJson(await readFile(realSchemaPath, "utf8"));
 			const validation = validateJsonSchemaSubset(schema);
 			for (const issue of validation.issues) {
 				issues.push({
@@ -110,7 +111,7 @@ function parseSpecText(text: string, specPath: string): unknown {
 	const extension = extname(specPath).toLowerCase();
 	if (extension === ".yaml" || extension === ".yml")
 		throw new Error("YAML workflow specs are not supported; use JSON (.json).");
-	return JSON.parse(text);
+	return parseAuthoredJson(text);
 }
 
 export const loadWorkflow = loadWorkflowSpec;
