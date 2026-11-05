@@ -4,6 +4,7 @@ import {
 	assertWorkflowNativeHostContext,
 	buildWorkflowNativeHostExtensionWrapper,
 } from "./workflow-native-host-context.js";
+import { isWorkflowNativeHostTool } from "./workflow-native-tool-policy.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import {
 	copyFile,
@@ -6810,7 +6811,12 @@ function selectedNormalizedPassthroughTools(
 			!LEGACY_PROVIDER_TOOL_NAMES.has(tool) &&
 			!isWorkflowWebSourceTool(tool) &&
 			providers !== undefined &&
-			Object.hasOwn(providers, tool),
+			Object.hasOwn(providers, tool) &&
+			// Native expansion (codemode, tool_search, MCP) adds classification-only
+			// provider entries. Pi serves those tools itself, so they are not
+			// passthroughs of a provider extension and need no owner here. A
+			// native-named entry that does declare extensions is still checked.
+			!(isWorkflowNativeHostTool(tool) && providers[tool]?.extensions === undefined),
 	);
 }
 

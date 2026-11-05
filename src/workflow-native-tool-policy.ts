@@ -99,6 +99,15 @@ export function prepareWorkflowNativeTaskPolicy(
 	};
 }
 
+/**
+ * True for a tool that Pi's native host serves itself (codemode,
+ * tool_search, MCP tools). Native expansion records these in toolProviders
+ * with a classification only, never with a provider extension.
+ */
+export function isWorkflowNativeHostTool(tool: string): boolean {
+	return nativeToolClassification(tool) !== undefined;
+}
+
 function nativeToolClassification(
 	tool: string,
 ): ToolClassification | undefined {
