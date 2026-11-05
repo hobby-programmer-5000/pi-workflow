@@ -27,7 +27,7 @@ Keep each pull request focused on one feature, fix, or documentation change. Do 
 
 ## Set up a local checkout
 
-pi-workflow requires Node.js `>=22.19.0` on macOS or Linux. Native Windows is not supported; use WSL2 instead.
+pi-workflow requires Node.js `>=22.19.0` on macOS or Linux. Upstream does not support native Windows; use WSL2 there. This fork's `windows-baseline-fixes` branch also runs on native Windows, but part of the unit suite still fails there because the test harness assumes POSIX tools (see [issue #1](https://github.com/hobby-programmer-5000/pi-workflow/issues/1)).
 
 Install the locked dependencies:
 
