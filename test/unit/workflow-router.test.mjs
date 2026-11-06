@@ -37,7 +37,7 @@ import {
 import { loadAgentMetadataByName } from "../../.tmp/unit/agents.js";
 import { readIndex, readRunRecord } from "../../.tmp/unit/store.js";
 import { parseArtifactGraphWorkflowSpec } from "../../.tmp/unit/artifact-graph-schema.js";
-import { toPosixPath } from "./helpers/platform-support.mjs";
+import { needsSymlinks, toPosixPath } from "./helpers/platform-support.mjs";
 
 initTheme(undefined, false);
 
@@ -521,7 +521,7 @@ test("routing catalog keeps the resolver's higher-priority alias winner without 
 });
 
 test("routing catalog rejects a discovered bundle spec symlink that escapes its root", {
-	skip: process.platform === "win32",
+	...needsSymlinks(),
 }, async () => {
 	const cwd = project();
 	writeAgent(cwd);
@@ -1027,7 +1027,7 @@ test("auto revalidates resolved profile/runtime tools against explicit safety co
 });
 
 test("auto comparison reads only its bounded canonical output artifact", {
-	skip: process.platform === "win32",
+	...needsSymlinks(),
 }, async () => {
 	const cwd = project();
 	writeAgent(cwd);

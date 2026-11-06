@@ -26,6 +26,7 @@ import {
 	workflowRunPath,
 	writeWorkflowLaunchCommandArtifact,
 } from "../../.tmp/unit/store.js";
+import { needsOpenDirectoryRename, needsSymlinks } from "./helpers/platform-support.mjs";
 
 function launchWith(command) {
 	return {
@@ -287,7 +288,7 @@ test("v2 auto launch metadata is distinct, strict, and cannot widen v1", async (
 });
 
 test("launch artifact rejects symlinked workflow roots, run directories, and artifacts", {
-	skip: process.platform === "win32",
+	...needsSymlinks(),
 }, async () => {
 	const secret = "/workflow run symlink-sensitive";
 	const rootCwd = await mkdtemp(join(tmpdir(), "piwf-launch-root-link-"));
@@ -356,7 +357,7 @@ test("launch artifact rejects symlinked workflow roots, run directories, and art
 });
 
 test("launch artifact read and commit reject path swaps without disclosing command bytes", {
-	skip: process.platform === "win32",
+	...needsOpenDirectoryRename(),
 }, async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "piwf-launch-swap-"));
 	const outside = await mkdtemp(join(tmpdir(), "piwf-launch-swap-outside-"));
@@ -413,7 +414,6 @@ test("launch artifact read and commit reject path swaps without disclosing comma
 });
 
 test("launch artifact hard-link races fail closed and zero escaped command bytes", {
-	skip: process.platform === "win32",
 }, async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "piwf-launch-hardlink-"));
 	const outside = await mkdtemp(join(tmpdir(), "piwf-launch-hardlink-outside-"));

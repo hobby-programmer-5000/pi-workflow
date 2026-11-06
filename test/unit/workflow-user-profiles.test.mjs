@@ -689,7 +689,10 @@ test("invalid, corrupt, and simultaneous writes preserve complete unrelated sett
 		symlinkSync(unrelatedFile, identity.settingsFile);
 		await assert.rejects(
 			() => loadWorkflowProfilePreference(spec, workflowPath),
-			/ELOOP|symbolic|too many symbolic links/i,
+			// win32 has no O_NOFOLLOW; the secure path check refuses the link by name.
+			process.platform === "win32"
+				? /must not be a symlink or junction/i
+				: /ELOOP|symbolic|too many symbolic links/i,
 		);
 		assert.equal(readFileSync(unrelatedFile, "utf8"), "keep-me\n");
 		rmSync(identity.settingsFile);
