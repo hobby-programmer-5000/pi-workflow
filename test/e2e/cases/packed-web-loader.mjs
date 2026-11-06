@@ -16,6 +16,11 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+	linkDirectorySync,
+	npmInvocation,
+	tarCommand,
+} from "../../unit/helpers/platform-support.mjs";
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const consumerRoot = mkdtempSync(join(tmpdir(), "pi-workflow-packed-web-loader-"));
@@ -36,6 +41,8 @@ for (const path of [home, agentDir, xdgConfig, xdgCache, xdgData, xdgState]) {
 }
 Object.assign(process.env, {
 	HOME: home,
+	// os.homedir() reads USERPROFILE on Windows.
+	...(process.platform === "win32" ? { USERPROFILE: home } : {}),
 	PI_CODING_AGENT_DIR: agentDir,
 	XDG_CONFIG_HOME: xdgConfig,
 	XDG_CACHE_HOME: xdgCache,
@@ -43,10 +50,19 @@ Object.assign(process.env, {
 	XDG_STATE_HOME: xdgState,
 });
 
+const isWin32 = process.platform === "win32";
+// Windows cannot spawn the extensionless npm command shim (or npm.cmd) by
+// name: run the runner's shim with Node so it still classifies the call, or
+// npm's JS entry when this case runs on its own.
+function npmCommand(args) {
+	const shims = process.env.PI_WORKFLOW_E2E_COMMAND_SHIMS;
+	if (isWin32 && shims) return [process.execPath, [join(shims, "npm"), ...args]];
+	return npmInvocation(args);
+}
+
 try {
 	const packOutput = execFileSync(
-		"npm",
-		["pack", "--pack-destination", packDir, "--silent", "--ignore-scripts"],
+		...npmCommand(["pack", "--pack-destination", packDir, "--silent", "--ignore-scripts"]),
 		{
 			cwd: sourceRoot,
 			encoding: "utf8",
@@ -63,7 +79,7 @@ try {
 	);
 	const tarballName = packOutput.trim().split(/\r?\n/).at(-1);
 	assert.ok(tarballName, "npm pack did not report a tarball");
-	execFileSync("tar", ["-xzf", join(packDir, tarballName), "-C", unpackDir], {
+	execFileSync(tarCommand(), ["-xzf", join(packDir, tarballName), "-C", unpackDir], {
 		cwd: consumerRoot,
 		timeout: 60_000,
 	});
@@ -74,7 +90,7 @@ try {
 	const packedPeerScope = join(packageRoot, "node_modules", "@earendil-works");
 	mkdirSync(packedPeerScope, { recursive: true });
 	for (const packageName of ["pi-ai", "pi-coding-agent", "pi-tui"]) {
-		symlinkSync(
+		linkDirectorySync(
 			join(sourceRoot, "node_modules", "@earendil-works", packageName),
 			join(packedPeerScope, packageName),
 			"dir",
@@ -83,7 +99,7 @@ try {
 	for (const packageName of ["typebox"]) {
 		const target = join(packageRoot, "node_modules", packageName);
 		if (!existsSync(target)) {
-			symlinkSync(join(sourceRoot, "node_modules", packageName), target, "dir");
+			linkDirectorySync(join(sourceRoot, "node_modules", packageName), target, "dir");
 		}
 	}
 
@@ -96,12 +112,15 @@ try {
 		join(consumerProject, "package.json"),
 		`${JSON.stringify({ name: "packed-consumer", private: true, type: "module" }, null, 2)}\n`,
 	);
-	symlinkSync(packageRoot, join(consumerScope, "pi-workflow"), "dir");
-	symlinkSync(
-		join(packageRoot, "src", "cli.mjs"),
-		join(consumerBin, "pi-workflow"),
-		"file",
-	);
+	linkDirectorySync(packageRoot, join(consumerScope, "pi-workflow"), "dir");
+	// npm on Windows installs bins as .cmd launchers that run
+	// `node <package>/src/cli.mjs`; that launch is exercised below instead.
+	if (!isWin32)
+		symlinkSync(
+			join(packageRoot, "src", "cli.mjs"),
+			join(consumerBin, "pi-workflow"),
+			"file",
+		);
 
 	const networkResources = [];
 	let loadedToolExecutions = 0;
@@ -340,11 +359,16 @@ try {
 			stdio: "pipe",
 			env: process.env,
 		});
-		execFileSync(join(consumerBin, "pi-workflow"), ["--help"], {
-			cwd: consumerProject,
-			stdio: "pipe",
-			env: process.env,
-		});
+		execFileSync(
+			...(isWin32
+				? [process.execPath, [join(consumerScope, "pi-workflow", "src", "cli.mjs"), "--help"]]
+				: [join(consumerBin, "pi-workflow"), ["--help"]]),
+			{
+				cwd: consumerProject,
+				stdio: "pipe",
+				env: process.env,
+			},
+		);
 		execFileSync(
 			process.execPath,
 			[

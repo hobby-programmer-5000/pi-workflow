@@ -11,6 +11,9 @@ import {
 } from "node:fs";
 import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { bashCommand, npmCliPath } from "../unit/helpers/platform-support.mjs";
+
+const isWin32 = process.platform === "win32";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const resultRoot = join(root, ".tmp", "test-results", "e2e");
@@ -31,15 +34,26 @@ const commandShimSource = join(
 );
 const commandShimDir = join(resultDir, "command-shims");
 const isolatedRoot = join(resultDir, "isolated-roots");
-const realNpm = findExecutable("npm", process.env.PATH);
+// Windows installs npm as a .cmd shim that cannot be spawned without a shell;
+// the command shim delegates to its npm-cli.js through Node instead.
+const realNpm = isWin32 ? npmCliPath() : findExecutable("npm", process.env.PATH);
 mkdirSync(commandShimDir, { recursive: true });
 for (const command of ["npm", "npx", "pnpm", "yarn", "bun", "curl", "wget", "pi"]) {
 	const shim = join(commandShimDir, command);
 	copyFileSync(commandShimSource, shim);
 	chmodSync(shim, 0o700);
+	// Windows resolves commands through PATHEXT, so an extensionless shim is
+	// never found there; a .cmd wrapper runs the same shim with Node.
+	if (isWin32)
+		writeFileSync(
+			`${shim}.cmd`,
+			`@"${process.execPath}" "%~dp0${command}" %*\r\n`,
+		);
 }
 const isolatedEnvironment = {
 	HOME: join(isolatedRoot, "home"),
+	// os.homedir() reads USERPROFILE on Windows.
+	...(isWin32 ? { USERPROFILE: join(isolatedRoot, "home") } : {}),
 	PI_CODING_AGENT_DIR: join(isolatedRoot, "pi-agent"),
 	XDG_CONFIG_HOME: join(isolatedRoot, "xdg-config"),
 	XDG_CACHE_HOME: join(isolatedRoot, "xdg-cache"),
@@ -54,6 +68,7 @@ Object.assign(process.env, isolatedEnvironment, {
 	PI_WORKFLOW_E2E_NO_EXTERNAL_ACTIONS: "1",
 	PI_WORKFLOW_E2E_PROCESS_LOG: processLog,
 	PI_WORKFLOW_E2E_REAL_NPM: realNpm,
+	...(isWin32 ? { PI_WORKFLOW_E2E_COMMAND_SHIMS: commandShimDir } : {}),
 	npm_config_offline: "true",
 	npm_config_audit: "false",
 	npm_config_fund: "false",
@@ -127,7 +142,13 @@ function run(label, command, args = [], options = {}) {
 	const out = join(resultDir, `${label}.out`);
 	const err = join(resultDir, `${label}.err`);
 	const startedAt = Date.now();
-	const result = spawnSync(command, args, {
+	// Windows cannot spawn the extensionless npm shim by name; run it with Node
+	// so the shim still classifies and logs the call.
+	const [spawnCommand, spawnArgs] =
+		isWin32 && command === "npm"
+			? [process.execPath, [join(commandShimDir, "npm"), ...args]]
+			: [command, args];
+	const result = spawnSync(spawnCommand, spawnArgs, {
 		cwd: options.cwd ?? root,
 		encoding: "utf8",
 		timeout: options.timeoutMs ?? 120_000,
@@ -203,7 +224,11 @@ function main() {
 		[join(root, "test", "e2e", "cases", "packed-web-loader.mjs")],
 		{ timeoutMs: 300_000 },
 	);
-	run("cli-inspect-reliability", "bash", [
+	// On Windows `bash` on PATH is often the WSL launcher; use Git Bash.
+	const bash = bashCommand();
+	if (!bash)
+		skip("cli-inspect-reliability", ["bash"], "skipped: Git for Windows bash not found");
+	else run("cli-inspect-reliability", bash, [
 		"-lc",
 		`set -euo pipefail
         tmp="$(mktemp -d)"
@@ -212,7 +237,7 @@ function main() {
 {"runId":"workflow_e2e","name":"unit","type":"artifact-graph","status":"completed","tasks":[{"taskId":"task-1","status":"completed","statusDetail":"completed","outputRetry":{"attempts":1,"reason":"workflow_output_invalid"},"resumeEvents":[{"at":"2026-06-08T00:00:00.000Z","fromStatus":"failed","fromStatusDetail":"context_or_request_too_large"}]}]}
 JSON
         cd "$tmp"
-        output="$(${process.execPath} ${JSON.stringify(join(root, "src", "cli.mjs"))} inspect workflow_e2e)"
+        output="$(${JSON.stringify(process.execPath)} ${JSON.stringify(join(root, "src", "cli.mjs"))} inspect workflow_e2e)"
         printf '%s\n' "$output"
         grep -q 'completion: repaired' <<<"$output"
         grep -q 'retries: output=1, launch=0, resumes=1, contextLimitFailures=1' <<<"$output"`,
@@ -223,8 +248,9 @@ JSON
 		`
     import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
     import { tmpdir } from 'node:os';
-    import { join } from 'node:path';
+    import { join, sep } from 'node:path';
     import { listWorkflows, resolveWorkflowRef } from './.tmp/unit/workflow-specs.js';
+    const slashed = (path) => path.split(sep).join('/');
     const cwd = mkdtempSync(join(tmpdir(), 'pi-workflow-registry-e2e-'));
     try {
       mkdirSync(join(cwd, 'workflows'), { recursive: true });
@@ -241,11 +267,11 @@ JSON
       if (!names.includes('review-artifact')) throw new Error('missing local workflow: ' + names.join(','));
       if (names.includes('invalid')) throw new Error('invalid workflow should be hidden: ' + names.join(','));
       const resolved = await resolveWorkflowRef('review-artifact', cwd);
-      if (!resolved.specPath.endsWith('workflows/review-artifact.json')) throw new Error('bad resolved path: ' + resolved.specPath);
+      if (!slashed(resolved.specPath).endsWith('workflows/review-artifact.json')) throw new Error('bad resolved path: ' + resolved.specPath);
       await resolveWorkflowRef('invalid', cwd).then(() => { throw new Error('invalid workflow should not resolve'); }, (error) => { if (!/workflow name or spec file not found/.test(String(error))) throw error; });
       for (const bundled of ['spec-review', 'deep-review', 'deep-research', 'impact-review']) {
         const resolvedBundled = await resolveWorkflowRef(bundled, process.cwd());
-        if (!resolvedBundled.specPath.includes('/workflows/')) throw new Error('bad bundled path for ' + bundled + ': ' + resolvedBundled.specPath);
+        if (!slashed(resolvedBundled.specPath).includes('/workflows/')) throw new Error('bad bundled path for ' + bundled + ': ' + resolvedBundled.specPath);
       }
     } finally {
       rmSync(cwd, { recursive: true, force: true });
