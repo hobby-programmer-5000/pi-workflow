@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { isRegistryFreeValidationOnly } from "../../tools/release/release-policy.mjs";
 import { assertPackedTypeScriptClosure } from "../../tools/release/typescript-package-closure.mjs";
+import { npmInvocation } from "./helpers/platform-support.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const fixtureRoot = join(root, "test", "fixtures", "package-closure");
@@ -121,8 +122,7 @@ test("WB-003 TypeScript closure rejects package-root escapes", () => {
 
 test("WB-003 real dry-run pack contains storage and the recursive pi-web-access closure", () => {
 	const output = execFileSync(
-		"npm",
-		["pack", "--dry-run", "--json", "--ignore-scripts"],
+		...npmInvocation(["pack", "--dry-run", "--json", "--ignore-scripts"]),
 		{
 			cwd: root,
 			encoding: "utf8",

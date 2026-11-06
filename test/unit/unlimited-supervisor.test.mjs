@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { esmSpecifier } from "./helpers/platform-support.mjs";
 
 for (const [name, rounds, args, expectedStatus] of [
  ["finite default retains supervisor deadline", 2, [], 1],
@@ -14,7 +15,9 @@ for (const [name, rounds, args, expectedStatus] of [
  const root = mkdtempSync(join(tmpdir(), "pi-unlimited-supervisor-"));
  try {
   mkdirSync(join(root, "src")); mkdirSync(join(root, "dist"));
-  copyFileSync(resolve("src/cli.mjs"), join(root, "src/cli.mjs"));
+  // cli.mjs imports these sibling source modules.
+  for (const file of ["cli.mjs", "host-pi-packages.mjs", "schedule-error-detail.mjs"])
+   copyFileSync(resolve("src", file), join(root, "src", file));
   writeFileSync(join(root, "package.json"), '{"type":"module"}');
   writeFileSync(join(root, "compiled.json"), JSON.stringify({ stages: [{ id: "trials", type: "loop", maxRounds: rounds }] }));
   writeFileSync(join(root, "dist/store.js"), `export const run = {runId:"workflow_test",status:"running",taskSummary:{completed:0,total:1,running:1,failed:0,interrupted:0}};
@@ -25,7 +28,7 @@ export async function scheduleRun(){if(++calls === 2){run.status="completed";run
   writeFileSync(join(root, "dist/process-role.js"), 'export function assertWorkflowActionAllowedForRole() {}');
   // Advance only this process's fake clock beyond the former four-hour cutoff.
   writeFileSync(join(root, "clock.mjs"), 'let calls=0; Date.now=()=>++calls*18000000;');
-  const result = spawnSync(process.execPath, ["--import", join(root, "clock.mjs"), join(root, "src/cli.mjs"), "supervise", "workflow_test", "--poll-ms", "250", ...args], { cwd: root, encoding: "utf8", timeout: 5000 });
+  const result = spawnSync(process.execPath, ["--import", esmSpecifier(join(root, "clock.mjs")), join(root, "src/cli.mjs"), "supervise", "workflow_test", "--poll-ms", "250", ...args], { cwd: root, encoding: "utf8", timeout: 5000 });
   assert.equal(result.error, undefined);
   assert.equal(result.status, expectedStatus, result.stdout + result.stderr);
   if (expectedStatus === 0) { assert.match(result.stdout, /runtime unlimited/); assert.match(result.stdout, /done: workflow_test completed/); }

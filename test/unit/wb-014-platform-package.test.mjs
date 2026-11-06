@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, posix, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { npmInvocation, toPosixPath } from "./helpers/platform-support.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const readRoot = (path) => readFileSync(join(root, path), "utf8");
@@ -164,8 +165,7 @@ test("publish workflow passes npm an unambiguous tarball path", () => {
 
 test("release pack JSON parser handles the real dry-run manifest from a file path", () => {
 	const output = execFileSync(
-		"npm",
-		["pack", "--dry-run", "--json", "--ignore-scripts"],
+		...npmInvocation(["pack", "--dry-run", "--json", "--ignore-scripts"]),
 		{
 			cwd: root,
 			encoding: "utf8",
@@ -225,24 +225,22 @@ test("npm publish dry-run accepts the same safe absolute tarball path form", () 
 			"# tarball path regression fixture\n",
 		);
 		const packOutput = execFileSync(
-			"npm",
-			["pack", "--json", "--ignore-scripts", "--pack-destination", tmp],
+			...npmInvocation(["pack", "--json", "--ignore-scripts", "--pack-destination", tmp]),
 			{ cwd: packageRoot, encoding: "utf8", timeout: 180_000 },
 		);
 		const [summary] = parseJson(packOutput, "npm pack fixture output");
 		const packagePath = join(tmp, summary.filename);
-		assert.ok(packagePath.startsWith(`${tmp}/`), packagePath);
+		assert.ok(toPosixPath(packagePath).startsWith(`${toPosixPath(tmp)}/`), packagePath);
 
 		const publish = spawnSync(
-			"npm",
-			[
+			...npmInvocation([
 				"publish",
 				packagePath,
 				"--dry-run",
 				"--ignore-scripts",
 				"--access",
 				"public",
-			],
+			]),
 			{ cwd: root, encoding: "utf8", timeout: 180_000 },
 		);
 		const combinedOutput = `${publish.stdout}\n${publish.stderr}`;
@@ -263,8 +261,7 @@ test("npm publish dry-run accepts the same safe absolute tarball path form", () 
 
 test("npm dry-run package contains every local asset referenced by official, opt-in, and scaffold specs", () => {
 	const output = execFileSync(
-		"npm",
-		["pack", "--dry-run", "--json", "--ignore-scripts"],
+		...npmInvocation(["pack", "--dry-run", "--json", "--ignore-scripts"]),
 		{
 			cwd: root,
 			encoding: "utf8",

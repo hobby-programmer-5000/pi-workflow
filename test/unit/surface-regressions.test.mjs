@@ -3,7 +3,7 @@ import test from 'node:test';
 import fsPromises, { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { readFileLinesBounded, WorkflowView } from '../../.tmp/unit/workflow-view.js';
 import workflowExtension, { parseWorkflowRunArgs, parseWorkflowDynamicArgs, registerWorkflowNaturalLanguageTools, deliverMissedWorkflowFeedback } from '../../.tmp/unit/extension.js';
@@ -12,6 +12,7 @@ import * as store from '../../.tmp/unit/store.js';
 import { parseWorkflow } from '../../.tmp/unit/schema.js';
 import { compileWorkflow } from '../../.tmp/unit/compiler.js';
 import { formatLogs } from '../../.tmp/unit/engine-format.js';
+import { esmSpecifier } from './helpers/platform-support.mjs';
 
 async function project(t) { const cwd = await mkdtemp(join(tmpdir(), 'surface-regression-')); t.after(() => rm(cwd, {recursive:true, force:true})); return cwd; }
 async function index(cwd, runs) { await mkdir(join(cwd,'.pi/workflows'),{recursive:true}); await writeFile(join(cwd,'.pi/workflows/index.json'),JSON.stringify({schemaVersion:1,updatedAt:new Date().toISOString(),runs})); }
@@ -21,7 +22,7 @@ async function child(code) { return new Promise((res,rej)=>{const p=spawn(proces
 
 test('ownership survives separate processes; same-session concurrent deltas and replay are not lost', async t => {
  const cwd=await project(t), runId='workflow_owner'; await index(cwd,[{runId,status:'running'}]);
- const mod=JSON.stringify(resolve('.tmp/unit/workflow-parent-usage.js'));
+ const mod=JSON.stringify(esmSpecifier(resolve('.tmp/unit/workflow-parent-usage.js')));
  const run=async(owner,n,id,begin=false)=>child(`const u=await import(${mod});const cwd=${JSON.stringify(cwd)};${begin?'await u.beginParentUsageTracking(cwd,"workflow_owner",'+JSON.stringify(owner)+');':'await u.resumeParentUsageTracking(cwd,'+JSON.stringify(owner)+');'}await u.recordParentSessionUsage(cwd,${JSON.stringify(message(n,id))},${JSON.stringify(owner)});`);
  await run('A',10,1,true); await run('B',777,2);
  assert.equal((await usage.readParentUsage(cwd,runId)).totalTokens,10);
@@ -50,7 +51,7 @@ test('preview reverse completion and disposal cannot commit stale task data',asy
  const cwd=await project(t), pending=new Map();
  for(const name of ['Ao','Ap','Bo','Bp']) await writeFile(join(cwd,name),name.startsWith('A')?'A':'B');
  const originalOpen=fsPromises.open;
- t.mock.method(fsPromises,'open',(path,...args)=>String(path).startsWith(cwd)?new Promise(r=>pending.set(String(path).split('/').at(-1),()=>r(originalOpen(path,...args)))):originalOpen(path,...args));
+ t.mock.method(fsPromises,'open',(path,...args)=>String(path).startsWith(cwd)?new Promise(r=>pending.set(basename(String(path)),()=>r(originalOpen(path,...args)))):originalOpen(path,...args));
  syncBuiltinESMExports();t.after(()=>{t.mock.restoreAll();syncBuiltinESMExports();});
  const view=new WorkflowView(cwd,{requestRender(){}},{},()=>{});
  view.mode='task';view.detailRun={runId:'workflow_ui',type:'legacy',tasks:['A','B'].map(taskId=>({taskId,status:'completed',files:{output:taskId+'o',taskPrompt:taskId+'p'}}))};

@@ -3,12 +3,13 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { verifyNpmPublication } from "../../tools/release/verify-npm-publication.mjs";
 
-const verifier = new URL("../../tools/release/verify-npm-publication.mjs", import.meta.url).pathname;
+const verifier = fileURLToPath(new URL("../../tools/release/verify-npm-publication.mjs", import.meta.url));
 const name = "@agwab/pi-workflow";
 const version = "0.12.0";
 const commit = "0123456789abcdef0123456789abcdef01234567";
