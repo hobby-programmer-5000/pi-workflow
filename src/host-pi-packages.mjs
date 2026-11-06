@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 
 const PI_PACKAGE = "@earendil-works/pi-coding-agent";
 const PI_PACKAGE_ROOT_ENV = "PI_SUBAGENT_PI_PACKAGE_ROOT";
@@ -30,9 +30,10 @@ function piRootAbove(path) {
  * Find the Pi installation for a process that runs outside Pi. The parent Pi
  * passes its own root when it spawns a supervisor. Otherwise look for the `pi`
  * launcher on PATH: an npm global install on Windows keeps node_modules beside
- * `pi.cmd`, and elsewhere `pi` is a symlink into the package.
+ * `pi.cmd`, a project install on Windows keeps `pi.cmd` in node_modules/.bin
+ * beside the package, and elsewhere `pi` is a symlink into the package.
  */
-export function findHostPiPackageRoot(env = process.env) {
+export function findHostPiPackageRoot(env = process.env, platform = process.platform) {
 	const inherited = env[PI_PACKAGE_ROOT_ENV];
 	if (inherited && isPiPackageRoot(inherited)) return realpathSync(inherited);
 	for (const entry of (env.PATH ?? env.Path ?? "").split(delimiter)) {
@@ -40,6 +41,12 @@ export function findHostPiPackageRoot(env = process.env) {
 		const beside = join(entry, "node_modules", ...PI_SEGMENTS);
 		if ((existsSync(join(entry, "pi.cmd")) || existsSync(join(entry, "pi"))) && isPiPackageRoot(beside))
 			return realpathSync(beside);
+		// npm writes .bin launchers as script shims on Windows, not symlinks, so
+		// the realpath walk below cannot reach the package from them.
+		if (platform === "win32" && basename(entry).toLowerCase() === ".bin" && existsSync(join(entry, "pi.cmd"))) {
+			const sibling = join(dirname(entry), ...PI_SEGMENTS);
+			if (isPiPackageRoot(sibling)) return realpathSync(sibling);
+		}
 		try {
 			const found = piRootAbove(dirname(realpathSync(join(entry, "pi"))));
 			if (found) return found;

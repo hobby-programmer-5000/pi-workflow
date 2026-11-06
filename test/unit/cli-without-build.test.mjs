@@ -91,6 +91,26 @@ test("without a build the CLI finds Pi through the launcher on PATH", () => {
 	}
 });
 
+test(
+	"without a build the CLI finds a project-installed Pi through node_modules/.bin on Windows",
+	{ skip: process.platform !== "win32" && "npm .bin launchers are symlinks outside Windows" },
+	() => {
+		const { root, pkg, project } = gitInstallLayout();
+		try {
+			const modules = join(root, "pi-project", "node_modules");
+			const bin = join(modules, ".bin");
+			mkdirSync(bin, { recursive: true });
+			mkdirSync(join(modules, "@earendil-works"), { recursive: true });
+			writeFileSync(join(bin, "pi.cmd"), "@echo off\r\n");
+			writeFileSync(join(bin, "pi"), "#!/bin/sh\n");
+			symlinkSync(piRoot, join(modules, "@earendil-works", "pi-coding-agent"), "junction");
+			assertCommandsWork(pkg, project, { PATH: bin, Path: bin });
+		} finally {
+			rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+		}
+	},
+);
+
 test("without a build or a Pi on PATH the CLI says what is missing", () => {
 	const { root, pkg, project } = gitInstallLayout();
 	try {
