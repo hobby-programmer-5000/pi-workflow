@@ -247,6 +247,7 @@ import {
 	writeWorkflowTaskArtifactBundle,
 	writeWorkflowWebSource,
 } from "./unit-test-support.mjs";
+import { canCreateSymlinks, toPosixPath } from "./helpers/platform-support.mjs";
 import { setForeachMaterializationPersistenceHookForTests } from "../../.tmp/unit/engine.js";
 import { prepareSubagentTaskLaunch } from "../../.tmp/unit/subagent-backend.js";
 
@@ -1951,7 +1952,7 @@ test("bundled artifact graph workflows are public runnable", async () => {
 		"path-ref-only tiered variant must not be listed as a bundled workflow name",
 	);
 	const resolved = await resolveWorkflowRef("spec-review", process.cwd());
-	assert(resolved.specPath.endsWith("workflows/spec-review/spec.json"));
+	assert(toPosixPath(resolved.specPath).endsWith("workflows/spec-review/spec.json"));
 });
 
 test("workflow artifact telemetry summarizes stage status, retries, wall clock, and output bytes", () => {
@@ -6740,29 +6741,32 @@ test("workflow_artifact rejects path injection, unknown artifacts, and debug rea
 			/inside the workflow run directory/,
 		);
 
-		writeFileSync(join(cwd, "outside-secret.md"), "secret\n");
-		symlinkSync(join(cwd, "outside-secret.md"), join(producerDir, "link.md"));
-		writeFileSync(
-			manifestPath,
-			JSON.stringify({
-				schema: "workflow-source-manifest-v1",
-				runId,
-				taskId: "task-2",
-				sources: [
-					{
-						source: "linked",
-						artifacts: { analysis: { path: join(producerDir, "link.md") } },
-					},
-				],
-			}),
-		);
-		await assert.rejects(
-			handleWorkflowArtifactToolCall(
-				{ action: "read", source: "linked", artifact: "analysis" },
-				{ runId, taskId: "task-2", manifestPath, ledgerPath, runDir },
-			),
-			/must not be a symlink/,
-		);
+		// A file symlink needs symlink rights on win32; the other cases still run.
+		if (canCreateSymlinks()) {
+			writeFileSync(join(cwd, "outside-secret.md"), "secret\n");
+			symlinkSync(join(cwd, "outside-secret.md"), join(producerDir, "link.md"));
+			writeFileSync(
+				manifestPath,
+				JSON.stringify({
+					schema: "workflow-source-manifest-v1",
+					runId,
+					taskId: "task-2",
+					sources: [
+						{
+							source: "linked",
+							artifacts: { analysis: { path: join(producerDir, "link.md") } },
+						},
+					],
+				}),
+			);
+			await assert.rejects(
+				handleWorkflowArtifactToolCall(
+					{ action: "read", source: "linked", artifact: "analysis" },
+					{ runId, taskId: "task-2", manifestPath, ledgerPath, runDir },
+				),
+				/must not be a symlink/,
+			);
+		}
 
 		const largePath = join(producerDir, "large.md");
 		writeFileSync(largePath, "x".repeat(10_000));

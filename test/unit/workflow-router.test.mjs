@@ -37,6 +37,7 @@ import {
 import { loadAgentMetadataByName } from "../../.tmp/unit/agents.js";
 import { readIndex, readRunRecord } from "../../.tmp/unit/store.js";
 import { parseArtifactGraphWorkflowSpec } from "../../.tmp/unit/artifact-graph-schema.js";
+import { toPosixPath } from "./helpers/platform-support.mjs";
 
 initTheme(undefined, false);
 
@@ -393,7 +394,7 @@ test("routing catalog uses normal workflow roots, validates metadata, and record
 		"invalid catalog entries must not be claimed unfit",
 	);
 	assert.ok(
-		catalog.issues.some((issue) => issue.specPath?.endsWith("bad/spec.json")),
+		catalog.issues.some((issue) => issue.specPath && toPosixPath(issue.specPath).endsWith("bad/spec.json")),
 	);
 });
 

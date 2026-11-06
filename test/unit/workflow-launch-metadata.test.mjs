@@ -49,8 +49,11 @@ test("launch command artifact is exact, private, integrity-linked, and absent fr
 		const artifact = join(workflowRunDir(cwd, runId), "launch-command.txt");
 
 		assert.equal(await readFile(artifact, "utf8"), text);
-		assert.equal((await stat(artifact)).mode & 0o777, 0o600);
-		assert.equal((await stat(workflowRunDir(cwd, runId))).mode & 0o777, 0o700);
+		// Windows file modes carry no POSIX permission bits.
+		if (process.platform !== "win32") {
+			assert.equal((await stat(artifact)).mode & 0o777, 0o600);
+			assert.equal((await stat(workflowRunDir(cwd, runId))).mode & 0o777, 0o700);
+		}
 		assert.equal(command.bytes, Buffer.byteLength(text, "utf8"));
 		assert.match(command.sha256, /^[0-9a-f]{64}$/);
 		assert.equal(await readWorkflowLaunchCommandArtifact(cwd, run), text);
@@ -114,16 +117,20 @@ test("launch metadata validation is closed and artifact reads fail closed on tam
 			/metadata malformed/,
 		);
 
-		await writeWorkflowLaunchCommandArtifact(
-			cwd,
-			runId,
-			"/workflow dynamic secret",
-		);
-		await chmod(join(workflowRunDir(cwd, runId), "launch-command.txt"), 0o644);
-		await assert.rejects(
-			() => readWorkflowLaunchCommandArtifact(cwd, run),
-			/verification failed/,
-		);
+		// A widened POSIX mode fails verification; Windows has no mode bits to
+		// widen (the product skips mode checks there by design).
+		if (process.platform !== "win32") {
+			await writeWorkflowLaunchCommandArtifact(
+				cwd,
+				runId,
+				"/workflow dynamic secret",
+			);
+			await chmod(join(workflowRunDir(cwd, runId), "launch-command.txt"), 0o644);
+			await assert.rejects(
+				() => readWorkflowLaunchCommandArtifact(cwd, run),
+				/verification failed/,
+			);
+		}
 	} finally {
 		await rm(cwd, { recursive: true, force: true });
 	}

@@ -611,7 +611,10 @@ test("legacy, tool, malformed, and tampered launch commands remain unavailable",
 test("missing artifacts and widened run directories stay unavailable after verification", async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "piwf-view-fail-closed-"));
 	try {
-		for (const scenario of ["missing", "wide-run-mode"]) {
+		// Windows has no POSIX mode bits to widen; only the missing case applies.
+		for (const scenario of process.platform === "win32"
+			? ["missing"]
+			: ["missing", "wide-run-mode"]) {
 			const run = runRecord();
 			run.runId = `workflow_view_${scenario.replaceAll("-", "_")}`;
 			const command = await writeWorkflowLaunchCommandArtifact(

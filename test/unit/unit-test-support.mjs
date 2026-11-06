@@ -224,14 +224,26 @@ import {
 	setSubagentLaunchControlsForTests,
 } from "../../.tmp/unit/subagent-backend.js";
 
+// Windows cannot delete a file that is still open (EPERM/EBUSY), and
+// background index or lease work may hold one briefly after a test body
+// returns. Give recursive removal a longer minimum retry budget there.
+const WIN32_RM_RETRIES = 20;
+const WIN32_RM_RETRY_DELAY_MS = 100;
+
 function rmSync(path, options) {
 	const retryOptions =
 		options?.recursive && options?.force
-			? {
-					...options,
-					maxRetries: options.maxRetries ?? 5,
-					retryDelay: options.retryDelay ?? 20,
-				}
+			? process.platform === "win32"
+				? {
+						...options,
+						maxRetries: Math.max(options.maxRetries ?? 0, WIN32_RM_RETRIES),
+						retryDelay: Math.max(options.retryDelay ?? 0, WIN32_RM_RETRY_DELAY_MS),
+					}
+				: {
+						...options,
+						maxRetries: options.maxRetries ?? 5,
+						retryDelay: options.retryDelay ?? 20,
+					}
 			: options;
 	return nodeRmSync(path, retryOptions);
 }

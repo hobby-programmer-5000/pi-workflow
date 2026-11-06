@@ -247,6 +247,7 @@ import {
 	writeWorkflowTaskArtifactBundle,
 	writeWorkflowWebSource,
 } from "./unit-test-support.mjs";
+import { renameDirectory, toPosixPath } from "./helpers/platform-support.mjs";
 
 test("dynamic controller engine guard reports stale missing runDecisionLoop wiring", async () => {
 	const specificMessage =
@@ -518,7 +519,7 @@ test("compiler lowers dynamic stages to controller placeholders", async () => {
 		);
 		assert.equal(controller.dynamic.helpers.normalize.idempotent, true);
 		assert.ok(
-			controller.dynamic.helpers.normalize.inputSchemaPath.endsWith(
+			toPosixPath(controller.dynamic.helpers.normalize.inputSchemaPath).endsWith(
 				"schemas/normalize-input.schema.json",
 			),
 		);
@@ -6128,7 +6129,7 @@ test("artifactGraph mutation-capable agents publish from managed and shared loop
 			generated.taskId,
 		);
 		mkdirSync(dirname(movedWorktree), { recursive: true });
-		renameSync(generated.cwd, movedWorktree);
+		await renameDirectory(generated.cwd, movedWorktree);
 		symlinkSync(movedWorktree, generated.cwd, linkType);
 		await assert.rejects(
 			() =>

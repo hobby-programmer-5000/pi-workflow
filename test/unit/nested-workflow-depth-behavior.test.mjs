@@ -19,7 +19,9 @@ async function fixture(files, options = {}) {
     h.setSubagentApiForTests({ async runSubagent() { throw new Error('unexpected provider agent'); } });
     for (const [name, value] of Object.entries(files)) {
         await mkdir(dirname(join(cwd, name)), { recursive: true });
-        await writeFile(join(cwd, name), typeof value === 'string' ? value.replaceAll('RESTART_MARKER', join(cwd, 'RESTART_MARKER')) : JSON.stringify(value));
+        // The marker sits inside JS string literals, so escape the path for them
+        // (Windows backslashes would otherwise become escape sequences).
+        await writeFile(join(cwd, name), typeof value === 'string' ? value.replaceAll('RESTART_MARKER', JSON.stringify(join(cwd, 'RESTART_MARKER')).slice(1, -1)) : JSON.stringify(value));
     }
     const specPath = join(cwd, 'spec.json');
     const compiled = await h.compileWorkflow(files['spec.json'], { cwd, task: 'Local depth behavior', specPath });

@@ -92,7 +92,8 @@ for (const trustCase of ["trusted", "untrusted", "revoked"]) {
 			assert.match(text(result), /"classify":\s*"function"/);
 			assert.match(text(result), /"generateImages":\s*"function"/);
 			assert.match(text(result), new RegExp(projectAllowed ? '"scope":"project"' : '"scope":"global"'));
-			assert.ok(text(result).includes(join(parent, "server-work")));
+			// The tool result is JSON text, which escapes Windows backslashes.
+			assert.ok(text(result).includes(JSON.stringify(join(parent, "server-work")).slice(1, -1)));
 			assert.match(text(await execute('await tools.mcp__shared__fail({});')), /FIXTURE_PERMISSION_DENIED/);
 			const failed = text(await execute('text(await tools.mcp__direct__fail({}));'));
 			assert.match(failed, /expected-error/);
