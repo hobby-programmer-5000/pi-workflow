@@ -2054,12 +2054,17 @@ function safeWorkflowArtifactDisplayPath(
 	cwd: string,
 	artifactPath: string,
 ): string | undefined {
-	const displayPath = relative(resolvePath(cwd), resolvePath(artifactPath));
+	const nativeDisplayPath = relative(resolvePath(cwd), resolvePath(artifactPath));
+	// win32 relative() always separates with "\", which can never be part of
+	// a file name there, so display "/" instead. The backslash rejection below
+	// keeps guarding POSIX, where "\" can be a name character (sep is "/").
+	const displayPath =
+		sep === "\\" ? nativeDisplayPath.replaceAll("\\", "/") : nativeDisplayPath;
 	if (
 		!displayPath ||
 		/[\u0000-\u001f\u007f`\\]/u.test(displayPath) ||
 		displayPath === ".." ||
-		displayPath.startsWith(".." + sep) ||
+		displayPath.startsWith("../") ||
 		isAbsolutePath(displayPath)
 	)
 		return undefined;

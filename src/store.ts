@@ -1037,7 +1037,13 @@ export function managedWorktreePath(
 }
 
 export function toProjectPath(cwd: string, filePath: string): string {
-	return isAbsolute(filePath) ? relative(cwd, filePath) || "." : filePath;
+	if (!isAbsolute(filePath)) return filePath;
+	const projectPath = relative(cwd, filePath) || ".";
+	// Persisted project paths use "/" on every platform (POSIX unchanged).
+	// fromProjectPath() still resolves records written with "\" on win32.
+	return process.platform === "win32"
+		? projectPath.replaceAll("\\", "/")
+		: projectPath;
 }
 
 export function fromProjectPath(cwd: string, filePath: string): string {
