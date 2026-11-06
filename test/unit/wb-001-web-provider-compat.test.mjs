@@ -348,8 +348,11 @@ test("WB-001 response aliases fail closed when tampered and do not intercept unm
 		await registered.get("fetch_content").execute("fetch", { url: "https://alias.example/page" });
 		const aliases = allFiles(join(cacheDir, "aliases"));
 		assert.equal(aliases.length, 1);
-		assert.equal(statSync(aliases[0]).mode & 0o777, 0o600);
-		assert.equal(statSync(join(cacheDir, "aliases")).mode & 0o777, 0o700);
+		// Windows file modes carry no POSIX permission bits.
+		if (process.platform !== "win32") {
+			assert.equal(statSync(aliases[0]).mode & 0o777, 0o600);
+			assert.equal(statSync(join(cacheDir, "aliases")).mode & 0o777, 0o700);
+		}
 		writeFileSync(aliases[0], JSON.stringify({ schema: "tampered" }));
 		const tampered = await registered.get("get_search_content").execute("tampered", {
 			responseId: "alias-origin",
@@ -1082,6 +1085,9 @@ try {
 					delete env.PI_CODING_AGENT_DIR;
 					delete env.XDG_CONFIG_HOME;
 					env[rootKind] = configRoot;
+					// os.homedir() reads USERPROFILE on Windows: mirror HOME into it so
+					// the HOME root is honoured and the real profile is never read.
+					if (process.platform === "win32") env.USERPROFILE = env.HOME;
 					const child = spawnSync(
 						process.execPath,
 						[childPath, capability, actualWebAccessExtension],
