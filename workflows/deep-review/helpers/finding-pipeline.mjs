@@ -801,7 +801,10 @@ function trustedOcrArtifactPathIssue(artifactPath, repoRoot) {
 
 function trustedOcrFileIssue(file) {
 	if (file.nlink !== 1) return "trusted OCR file must have exactly one link";
-	if ((file.mode & 0o022) !== 0) {
+	// Windows reports every writable file as 0o666 and has no POSIX group or
+	// world bits; access there comes from inherited ACLs, as with the owner
+	// check below, which already skips where process.getuid is missing.
+	if (process.platform !== "win32" && (file.mode & 0o022) !== 0) {
 		return "trusted OCR file must not be group- or world-writable";
 	}
 	if (typeof process.getuid === "function" && file.uid !== process.getuid()) {
