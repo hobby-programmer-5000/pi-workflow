@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, open, readFile, readdir, rename, rm, unlink } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 import {
 	appendPrivateFile,
@@ -2009,7 +2009,8 @@ function sourceObjectPath(
 	}
 	const sourcesDir = resolve(config.cacheDir, "sources");
 	const path = resolve(sourcesDir, `${sourceRef}.json`);
-	if (!path.startsWith(`${sourcesDir}/`)) {
+	// `sep` is "/" on POSIX; resolve() returns backslash paths on win32.
+	if (!path.startsWith(`${sourcesDir}${sep}`)) {
 		throw new Error("workflow web sourceRef escaped source cache");
 	}
 	return path;
