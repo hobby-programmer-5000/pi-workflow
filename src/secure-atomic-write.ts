@@ -264,7 +264,16 @@ export async function publishPrivateGenerationDirectory(
 		// Recheck after the hook: generation publication must not replace a
 		// destination created while the generation was being prepared.
 		await assertDestinationAbsent(parent, basename(absolute));
-		await rename(temporary, join(parent.namedPath, basename(absolute)));
+		try {
+			await rename(temporary, join(parent.namedPath, basename(absolute)));
+		} catch (error) {
+			// A contending publisher won the race after the recheck. POSIX reports
+			// that as EEXIST/ENOTEMPTY; Windows refuses a directory rename onto an
+			// existing directory with EPERM, so report the same EEXIST there.
+			if (IS_WIN32 && isWin32RenameDenied(error))
+				await assertDestinationAbsent(parent, basename(absolute));
+			throw error;
+		}
 		await assertNotLinkBeforeOpen(join(parent.namedPath, basename(absolute)));
 		const published = await open(join(parent.namedPath, basename(absolute)), READ_DIRECTORY);
 		await published.close().catch(() => undefined);
@@ -470,6 +479,11 @@ async function assertNamedDirectory(directory: OpenDirectory): Promise<void> {
 	if (!opened.isDirectory() || !sameIdentity(opened, named)) {
 		throw new Error("secure directory changed during write");
 	}
+}
+
+function isWin32RenameDenied(error: unknown): boolean {
+	const code = (error as NodeJS.ErrnoException | undefined)?.code;
+	return code === "EPERM" || code === "EACCES";
 }
 
 async function assertDestinationAbsent(
