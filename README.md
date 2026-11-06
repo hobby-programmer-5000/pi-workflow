@@ -6,6 +6,8 @@
 
 <p align="center"><strong>Workflow orchestration for Pi.</strong></p>
 
+> **Windows fork.** This is a personal fork of [AgwaB/pi-workflow](https://github.com/AgwaB/pi-workflow) that adds native Windows support. See [Native Windows](#native-windows) below; the rest of this README is upstream's.
+
 <p align="center">
   <a href="https://www.npmjs.com/package/@agwab/pi-workflow"><img src="https://img.shields.io/npm/v/@agwab/pi-workflow.svg" alt="npm"></a>
 </p>
@@ -40,10 +42,10 @@ pi update npm:@agwab/pi-workflow
 
 Requires Node.js `>=22.19.0` on macOS or Linux.
 
-**Native Windows:** this fork's [`windows-baseline-fixes`](https://github.com/hobby-programmer-5000/pi-workflow/tree/windows-baseline-fixes) branch runs on native Windows. The npm package above comes from upstream, which does not support native Windows and does not include these changes; use WSL2 with it. Install the branch instead:
+<a id="native-windows"></a>**Native Windows:** this fork's `main` branch runs on native Windows. The npm package above comes from upstream, which does not support native Windows and does not include these changes; use WSL2 with it. Install this fork instead:
 
 ```bash
-pi install git:github.com/hobby-programmer-5000/pi-workflow@windows-baseline-fixes
+pi install git:github.com/hobby-programmer-5000/pi-workflow
 ```
 
 A very long home directory path can make this fail with `Filename too long`, because Windows limits paths to 260 characters by default. [Issue #1](https://github.com/hobby-programmer-5000/pi-workflow/issues/1) lists what has been verified and the known limitations. The interactive TUI screens have not been verified on Windows yet.
