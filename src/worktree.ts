@@ -53,14 +53,27 @@ export async function ensureManagedWorktree(
 ): Promise<void> {
 	if (!compiledTask.safety.requiresWorktree) return;
 
-	const gitRoot = findGitRoot(compiledTask.cwd);
+	const path = managedWorktreePath(projectCwd, run.runId, task.taskId);
+	// A relaunch (output retry or resume) of a task that already ran in its
+	// managed worktree arrives with compiledTask.cwd set to that worktree,
+	// because launch preparation copies task.cwd. Resolving the source
+	// checkout from there would make the worktree its own git root, so it
+	// would be removed and `git worktree add` would then run inside the
+	// deleted directory. Use the recorded source checkout instead.
+	const sourceCwd =
+		task.worktree.enabled &&
+		task.worktree.path === path &&
+		task.worktree.baseCwd &&
+		resolve(compiledTask.cwd) === resolve(path)
+			? task.worktree.baseCwd
+			: compiledTask.cwd;
+	const gitRoot = findGitRoot(sourceCwd);
 	if (!gitRoot) {
 		throw new Error(
-			`managed worktree required for ${task.taskId}, but ${compiledTask.cwd} is not inside a git repository`,
+			`managed worktree required for ${task.taskId}, but ${sourceCwd} is not inside a git repository`,
 		);
 	}
 
-	const path = managedWorktreePath(projectCwd, run.runId, task.taskId);
 	const branch = `pi-workflow/${run.runId}-${task.taskId}`;
 	await mkdir(dirname(path), { recursive: true });
 
@@ -90,7 +103,7 @@ export async function ensureManagedWorktree(
 				enabled: true,
 				path,
 				branch: task.worktree.branch ?? branch,
-				baseCwd: compiledTask.cwd,
+				baseCwd: sourceCwd,
 				warning: snapshot.record.dirty
 					? "reusing existing managed worktree with dirty source checkout snapshot"
 					: "reusing existing managed worktree path",
@@ -124,7 +137,7 @@ export async function ensureManagedWorktree(
 		enabled: true,
 		path,
 		branch,
-		baseCwd: compiledTask.cwd,
+		baseCwd: sourceCwd,
 		warning: snapshot.record.dirty
 			? "applied dirty source checkout snapshot"
 			: null,

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { setRunLeaseTestHooksForTests, withRunLease, writeJsonAtomic, writeJsonExclusive } from '../../.tmp/unit/store.js';
 import { awaitSubagentOperation } from '../../.tmp/unit/subagent-backend.js';
 import { pruneWorkflowRuns, setWorkflowPruneBeforeDeleteForTests, setWorkflowPruneAfterQuarantineForTests } from '../../.tmp/unit/run-retention.js';
+import { isWin32, linkDirectory } from './helpers/platform-support.mjs';
 
 async function fixture(fn) {
  const cwd = await mkdtemp(join(tmpdir(), 'piwf-runtime-boundary-'));
@@ -47,7 +48,9 @@ test('two Node processes serialize updates under the supervisor lease and publis
  while (!done) {
   const value = JSON.parse(await readFile(counter, 'utf8'));
   assert.equal(value.payload.length, 65536); reads++;
-  await new Promise(resolve => setTimeout(resolve, 1));
+  // Windows cannot rename over a file while it is open, so a 1 ms re-read
+  // loop can starve the writers' bounded replace retries; pace it there.
+  await new Promise(resolve => setTimeout(resolve, isWin32 ? 10 : 1));
  }
  await workers;
  assert.equal(JSON.parse(await readFile(counter, 'utf8')).count, 24);
@@ -99,13 +102,13 @@ for (const component of ['.pi', 'workflows', 'workflow-subagents']) {
   if (component === 'workflow-subagents') {
    await mkdir(join(outside, 'workflow-fixture'));
    await writeFile(join(outside, 'workflow-fixture', 'marker'), 'preserve');
-   await symlink(outside, join(cwd, '.pi', component));
+   await linkDirectory(outside, join(cwd, '.pi', component));
   } else {
    const source = component === '.pi' ? join(cwd, '.pi') : join(cwd, '.pi', component);
    const { rename } = await import('node:fs/promises');
    await rm(outside, { recursive: true });
    await rename(source, outside);
-   await symlink(outside, source);
+   await linkDirectory(outside, source);
   }
   const summary = await pruneWorkflowRuns(cwd, { keep: 0, yes: true });
   if (component === 'workflow-subagents') assert.equal(await readFile(join(outside, 'workflow-fixture', 'marker'), 'utf8'), 'preserve');

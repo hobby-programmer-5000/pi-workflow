@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,6 +13,7 @@ import {
   writePrivateFileNoReplace,
 } from "../../.tmp/unit/secure-atomic-write.js";
 import { writeWorkflowTaskArtifactBundle } from "../../.tmp/unit/workflow-output-artifacts.js";
+import { linkDirectory } from "./helpers/platform-support.mjs";
 
 const project = () => mkdtemp(join(tmpdir(), "pi-mtbyqwu0-security-"));
 
@@ -53,7 +54,7 @@ const project = () => mkdtemp(join(tmpdir(), "pi-mtbyqwu0-security-"));
   const outside = await project();
   const linkRoot = join(root, "link");
   try {
-    await symlink(outside, linkRoot);
+    await linkDirectory(outside, linkRoot);
     await assert.rejects(() => appendPrivateFile(join(linkRoot, "append"), "x"));
     await assert.rejects(() => writePrivateFileAtomic(join(linkRoot, "atomic"), "x"));
     await assert.rejects(() => writePrivateFileNoReplace(join(linkRoot, "no-replace"), "x"));

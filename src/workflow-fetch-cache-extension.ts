@@ -825,6 +825,11 @@ async function removeFencedCacheLock(lockDir: string, fence: CacheLockFence): Pr
 			// Move the fenced generation out of the live lock name in one atomic
 			// step. A crash cannot leave an ownerless directory blocking reacquire.
 			const tombstone = `${lockDir}.releasing-${randomUUID()}`;
+			// Windows refuses to rename a directory while a file inside it is
+			// open (EPERM), which left the lock stranded. The guard file's
+			// presence is what keeps the directory non-empty; close its handle
+			// first there. POSIX keeps the handle open across the rename.
+			if (process.platform === "win32") { await guard.close(); guard = undefined; }
 			await rename(lockDir, tombstone);
 			guarded = false;
 			await rm(tombstone, { recursive: true, force: true });

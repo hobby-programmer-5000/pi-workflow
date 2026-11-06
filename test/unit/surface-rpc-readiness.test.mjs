@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { startRpcSession } from "./surface-rpc-harness.mjs";
 
+const isWin32 = process.platform === "win32";
+
 const REAL_CLI = resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
 const EXTENSION = resolve("src/extension.ts");
 
@@ -100,7 +102,7 @@ test("missing executable yields a spawn diagnostic and settled cleanup", { timeo
 	assert.notEqual(terminal.code, 0);
 });
 
-test("closed child stdin yields a pipe diagnostic without an unhandled error", { timeout: 30000 }, async (t) => {
+test("closed child stdin yields a pipe diagnostic without an unhandled error", { timeout: 30000, skip: isWin32 && "win32: closing fd 0 in the child leaves the parent's pipe writable, so no EPIPE" }, async (t) => {
 	const f = await fixture(t);
 	const session = f.start(["-e", 'require("node:fs").closeSync(0); process.stdout.write(\'{"id":"ready"}\\n\'); setInterval(() => {}, 1000);']);
 	await session.waitFor(isReady, { budget: 30000, label: "closed stdin readiness" });
@@ -116,7 +118,7 @@ test("post-ready response keeps its separate bounded operation deadline", { time
 	await assert.rejects(session.waitFor((e) => e.id === "unanswered", { budget: 200, label: "operation" }), /operation: no matching event within 200ms/);
 });
 
-test("cleanup escalates an already-ready SIGTERM-ignoring process and joins close", { timeout: 30000 }, async (t) => {
+test("cleanup escalates an already-ready SIGTERM-ignoring process and joins close", { timeout: 30000, skip: isWin32 && "win32: SIGTERM is TerminateProcess and cannot be ignored, so there is no SIGKILL escalation" }, async (t) => {
 	const f = await fixture(t);
 	const session = f.start(["-e", 'process.on("SIGTERM", () => {}); process.stdout.write(\'{"id":"ready"}\\n\');' + idleScript]);
 	await session.waitFor(isReady, { budget: 30000, label: "signal handler readiness" });

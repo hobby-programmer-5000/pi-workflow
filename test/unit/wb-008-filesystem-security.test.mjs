@@ -24,6 +24,7 @@ import {
 	setSecureAtomicTempSuffixForTests,
 	writePrivateFileAtomic,
 } from "../../.tmp/unit/secure-atomic-write.js";
+import { canCreateSymlinks, linkDirectory } from "./helpers/platform-support.mjs";
 
 test("private generation publication crash leaves no ownerless live lock", async () => {
 	const root = await mkdtemp(join(tmpdir(), "piwf-wb008-generation-"));
@@ -96,7 +97,7 @@ test("WB-008 detects an ancestor-directory swap by descriptor identity", async (
 	setArtifactValidatedHookForTests(async () => {
 		setArtifactValidatedHookForTests(undefined);
 		await rename(taskDir, `${taskDir}-original`);
-		await symlink(externalDir, taskDir);
+		await linkDirectory(externalDir, taskDir);
 	});
 	await assert.rejects(
 		() => readAnalysis(artifact, runDir),
@@ -126,10 +127,14 @@ test("WB-008 private atomic writer refuses precreated temp symlinks and enforces
 	const victim = join(root, "victim.txt");
 	await mkdir(cacheDir, { recursive: true });
 	await writeFile(victim, "unchanged");
-	setSecureAtomicTempSuffixForTests(() => "attack");
-	await symlink(victim, `${target}.attack.tmp`);
-	await assert.rejects(() => writePrivateFileAtomic(target, "malicious"));
-	assert.equal(await readFile(victim, "utf8"), "unchanged");
+	// A precreated file symlink needs symlink rights on win32; the write and
+	// mode checks below still run.
+	if (canCreateSymlinks()) {
+		setSecureAtomicTempSuffixForTests(() => "attack");
+		await symlink(victim, `${target}.attack.tmp`);
+		await assert.rejects(() => writePrivateFileAtomic(target, "malicious"));
+		assert.equal(await readFile(victim, "utf8"), "unchanged");
+	}
 
 	setSecureAtomicTempSuffixForTests(undefined);
 	await writePrivateFileAtomic(target, "private");

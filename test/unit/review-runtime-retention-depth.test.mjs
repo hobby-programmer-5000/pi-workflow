@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat, readdir, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { pruneWorkflowRuns, setWorkflowPruneAfterQuarantineForTests, setWorkflowPruneBeforeDeleteForTests, setWorkflowPruneBeforePrimaryDetachForTests } from '../../.tmp/unit/run-retention.js';
 import { readIndex, updateIndex, withRunLease, writeRunRecord, acquireWorkflowTopologyLease, setRunLeaseTestHooksForTests } from '../../.tmp/unit/store.js';
 import { remainingDynamicNestedWorkflowDepth } from '../../.tmp/unit/dynamic-nested-depth.js';
 import { projectDynamicState, readOrRebuildDynamicState, recordDynamicEventAndUpdateState } from '../../.tmp/unit/dynamic-state.js';
+import { linkDirectory } from './helpers/platform-support.mjs';
 const parent = 'workflow_parent', child = 'workflow_child', controller = 'adaptive.controller';
 const timestamp = '2026-01-01T00:00:00.000Z';
 const event = (seq, type, payload, extra = {}) => ({schema:'pi-workflow-dynamic-event-v1',runId:parent,controllerSpecId:controller,seq,type,payload,opId:`op-${seq}`,requestHash:`hash-${seq}`,timestamp,...extra});
@@ -57,8 +59,8 @@ test('RR-02 retained child quarantine protects its parent',async()=>{
 });
 test('RR-02 actual CLI rejects mirror validation failure and preserves primary and mirror evidence',async()=>{
  const cwd=await fixture(); try {
-  const p=await run(cwd,parent); const outside=join(cwd,'mirror-evidence'); await mkdir(outside); await writeFile(join(outside,'evidence'),'recover me'); const mirror=join(cwd,'.pi','workflow-subagents',parent); await mkdir(join(mirror,'..'),{recursive:true}); await symlink(outside,mirror); await updateIndex(cwd);
-  const cli=spawnSync(process.execPath,[new URL('../../src/cli.mjs',import.meta.url).pathname,'prune','--keep','0','--yes','--json'],{cwd,encoding:'utf8'});
+  const p=await run(cwd,parent); const outside=join(cwd,'mirror-evidence'); await mkdir(outside); await writeFile(join(outside,'evidence'),'recover me'); const mirror=join(cwd,'.pi','workflow-subagents',parent); await mkdir(join(mirror,'..'),{recursive:true}); await linkDirectory(outside,mirror); await updateIndex(cwd);
+  const cli=spawnSync(process.execPath,[fileURLToPath(new URL('../../src/cli.mjs',import.meta.url)),'prune','--keep','0','--yes','--json'],{cwd,encoding:'utf8'});
   assert.notEqual(cli.status,0,cli.stdout+cli.stderr); const summary=JSON.parse(cli.stdout); assert.ok(summary.error); assert.equal(summary.runs[0].detached,false); assert.equal(await exists(p.dir),true); assert.equal(await readFile(join(mirror,'evidence'),'utf8'),'recover me'); assert.equal((await readIndex(cwd)).runs[0].runId,parent);
  } finally {await rm(cwd,{recursive:true,force:true});}
 });

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import scaffoldGate from "../../skills/workflow-guide/scaffolds/support-partition/helpers/evidence-gate.mjs";
 import partition from "../../workflows/spec-review/helpers/spec-review-pipeline.mjs";
 import render from "../../workflows/spec-review/helpers/render-spec-review-report.mjs";
+import { isWin32, linkDirectory, needsFifo, needsOpenDirectoryRename, needsSymlinks } from "./helpers/platform-support.mjs";
 
 export const citation = { file: "source.ts", lineStart: 1, lineEnd: 1, quote: "export const enabled = false;" };
 export const candidate = { id: "finding-001", title: "Local gap", claim: "A gap exists", severity: "medium", requirementIds: ["REQ-1"], specEvidence: [], implementationEvidence: [], testEvidence: [], uncertainty: "Verify" };
@@ -81,13 +82,14 @@ async function scaffold(cwd, file = "source.ts", quote = citation.quote) {
   } } } });
 }
 for (const kind of ["leaf-symlink", "ancestor-symlink", "oversize", "fifo", "directory"]) {
-  test(`scaffold rejects ${kind} before unsafe read`, () => fixture(async cwd => {
+  test(`scaffold rejects ${kind} before unsafe read`, kind === "leaf-symlink" ? needsSymlinks() : kind === "fifo" ? needsFifo() : {}, () => fixture(async cwd => {
     let file = "bad.ts";
     if (kind.includes("symlink")) {
       const outside = await mkdtemp(join(tmpdir(), "review-outside-"));
       try {
         await writeFile(join(outside, "source.ts"), citation.quote);
-        await symlink(kind === "leaf-symlink" ? join(outside, "source.ts") : outside, join(cwd, file));
+        if (kind === "leaf-symlink") await symlink(join(outside, "source.ts"), join(cwd, file));
+        else await linkDirectory(outside, join(cwd, file));
         if (kind === "ancestor-symlink") file += "/source.ts";
         const out = await scaffold(cwd, file);
         assert.equal(out.value.evidenceGate.integrity, "partial");
@@ -157,10 +159,11 @@ for (const [label, read] of [["scaffold", readScaffold], ["spec-review", readSpe
   test(`${label} oversize and nonregular rejected before open`, () => fixture(async cwd => {
     const fd = await open(join(cwd, "large"), "w"); await fd.truncate(8 * 1024 * 1024); await fd.close();
     await mkdir(join(cwd, "directory"));
-    execFileSync("mkfifo", [join(cwd, "fifo")]);
+    // Windows has no FIFOs; the large and directory cases still run there.
+    if (!isWin32) execFileSync("mkfifo", [join(cwd, "fifo")]);
     mock.method(fsPromises, "open", () => { throw new Error("must not open"); });
     syncBuiltinESMExports();
-    try { for (const file of ["large", "directory", "fifo"]) await assert.rejects(read(cwd, file), /bounded regular/); }
+    try { for (const file of isWin32 ? ["large", "directory"] : ["large", "directory", "fifo"]) await assert.rejects(read(cwd, file), /bounded regular/); }
     finally { mock.restoreAll(); syncBuiltinESMExports(); }
   }));
 }
@@ -216,7 +219,7 @@ test("UTF-8 BOM is retained in exact bytes and digest", () => fixture(async cwd 
   const { result } = await roundtrip(cwd, [{ ...citation, quote: "\uFEFF" + citation.quote }]);
   assert.equal(result.status, "passed");
 }));
-test("reader detects ancestor replacement after open before any content read", () => fixture(async cwd => {
+test("reader detects ancestor replacement after open before any content read", needsOpenDirectoryRename(), () => fixture(async cwd => {
   await mkdir(join(cwd, "dir"));
   await writeFile(join(cwd, "dir/source.ts"), citation.quote);
   const actualOpen = fsPromises.open;

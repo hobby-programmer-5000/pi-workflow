@@ -48,14 +48,27 @@ function digest(value: unknown): string {
 }
 
 async function readNonce(file: string): Promise<{ nonce: string }> {
+	// Native Windows has no O_NOFOLLOW: refuse a link at the name first, then
+	// require the opened handle to be the same file (bigint IDs, since NTFS
+	// file IDs can exceed Number.MAX_SAFE_INTEGER). Mode bits do not express
+	// privacy on win32 (ACLs do), so only the mode comparison is skipped there.
+	const isWin32 = process.platform === "win32";
+	const named = isWin32 ? await lstat(file, { bigint: true }) : undefined;
+	if (named?.isSymbolicLink())
+		throw new Error("workflow state-root nonce identity mismatch");
 	const handle = await open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
 	try {
 		const info = await handle.stat();
+		if (named) {
+			const opened = await handle.stat({ bigint: true });
+			if (opened.dev !== named.dev || opened.ino !== named.ino)
+				throw new Error("workflow state-root nonce identity mismatch");
+		}
 		const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
 		if (
 			!info.isFile() ||
 			info.nlink !== 1 ||
-			(info.mode & 0o777) !== 0o600 ||
+			(!isWin32 && (info.mode & 0o777) !== 0o600) ||
 			(uid !== undefined && info.uid !== uid)
 		)
 			throw new Error("workflow state-root nonce identity mismatch");

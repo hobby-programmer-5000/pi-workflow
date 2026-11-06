@@ -1,8 +1,11 @@
+import { renameReplacing } from "./replace-file.js";
+import { parseAuthoredJson } from "./authored-file-text.js";
 import { randomBytes } from "node:crypto";
 import {
 	assertWorkflowNativeHostContext,
 	buildWorkflowNativeHostExtensionWrapper,
 } from "./workflow-native-host-context.js";
+import { isWorkflowNativeHostTool } from "./workflow-native-tool-policy.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import {
 	copyFile,
@@ -930,7 +933,9 @@ async function persistSharedModelRateLimitBackoffs(
 					`${JSON.stringify(Object.fromEntries(entries), null, 2)}\n`,
 					"utf8",
 				);
-				await rename(tmpFile, file);
+				// win32: retry while another process briefly holds the file open.
+				if (process.platform === "win32") await renameReplacing(tmpFile, file);
+				else await rename(tmpFile, file);
 			} finally {
 				await rm(tmpFile, { force: true });
 			}
@@ -4549,7 +4554,9 @@ async function writeForeachBatchTextAtomic(
 	await mkdir(dirname(file), { recursive: true });
 	const temporary = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
 	await writeFile(temporary, value, "utf8");
-	await rename(temporary, file);
+	// win32: retry while another process briefly holds the file open.
+	if (process.platform === "win32") await renameReplacing(temporary, file);
+	else await rename(temporary, file);
 }
 
 async function persistTerminalForeachBatchEvidence(
@@ -5221,7 +5228,7 @@ async function readTaskControlJsonSchema(
 	const source = await readFile(schemaPath, "utf8");
 	let schema: unknown;
 	try {
-		schema = JSON.parse(source);
+		schema = parseAuthoredJson(source);
 	} catch (error) {
 		throw new Error(`task ${task.taskId} control schema is not valid JSON`, {
 			cause: error,
@@ -6809,7 +6816,12 @@ function selectedNormalizedPassthroughTools(
 			!LEGACY_PROVIDER_TOOL_NAMES.has(tool) &&
 			!isWorkflowWebSourceTool(tool) &&
 			providers !== undefined &&
-			Object.hasOwn(providers, tool),
+			Object.hasOwn(providers, tool) &&
+			// Native expansion (codemode, tool_search, MCP) adds classification-only
+			// provider entries. Pi serves those tools itself, so they are not
+			// passthroughs of a provider extension and need no owner here. A
+			// native-named entry that does declare extensions is still checked.
+			!(isWorkflowNativeHostTool(tool) && providers[tool]?.extensions === undefined),
 	);
 }
 

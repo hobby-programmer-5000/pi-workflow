@@ -1,3 +1,4 @@
+import { parseAuthoredJson } from "./authored-file-text.js";
 import {
 	lstat,
 	open,
@@ -358,7 +359,7 @@ export async function listWorkflowRoutingSpecs(
 		aggregateBytes += bytes;
 		let spec: ArtifactGraphWorkflowSpec;
 		try {
-			const parsed = JSON.parse(text);
+			const parsed = parseAuthoredJson(text);
 			assertBoundedRoutingCatalogJson(parsed);
 			if (!isArtifactGraphWorkflowSpecShape(parsed))
 				throw new Error("not an artifact-graph workflow spec");
@@ -717,7 +718,7 @@ async function isRunnableSpecFile(file: string): Promise<boolean> {
 	if (extname(file).toLowerCase() !== ".json") return false;
 	try {
 		return isArtifactGraphWorkflowSpecShape(
-			JSON.parse(await readFile(file, "utf8")),
+			parseAuthoredJson(await readFile(file, "utf8")),
 		);
 	} catch {
 		return false;

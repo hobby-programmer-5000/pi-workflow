@@ -1,3 +1,4 @@
+import { renameReplacing } from "./replace-file.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isDeepStrictEqual } from "node:util";
 import { assertWorkflowNativeHostContext, resolveWorkflowNativeHostContext } from "./workflow-native-host-context.js";
@@ -241,6 +242,19 @@ function sameFileIdentity(left: Stats, right: Stats): boolean {
 	return left.dev === right.dev && left.ino === right.ino;
 }
 
+const IS_WIN32 = process.platform === "win32";
+
+/**
+ * Windows grants access through ACLs, not POSIX mode bits (Node reports 0o666
+ * for every writable entry there), so a mode check cannot express privacy on
+ * win32. Mirrors the existing win32 handling in workflow-fetch-cache-extension.
+ * Link-count and identity checks still apply on every platform.
+ */
+function hasPrivateMode(info: { mode: number }, mode: number): boolean {
+	return IS_WIN32 || (info.mode & 0o777) === mode;
+}
+
+
 async function ensurePhysicalDirectoryComponent(
 	path: string,
 	mode?: number,
@@ -303,7 +317,7 @@ async function assertPhysicalWorkflowLaunchRunDirectory(
 		rootReal !== directory.rootPath ||
 		runReal !== directory.runPath ||
 		dirname(runReal) !== rootReal ||
-		(requirePrivateMode && (runHandleStat.mode & 0o777) !== 0o700)
+		(requirePrivateMode && !hasPrivateMode(runHandleStat, 0o700))
 	) {
 		throw unsafeWorkflowLaunchArtifactPath();
 	}
@@ -347,7 +361,9 @@ async function openPhysicalWorkflowLaunchRunDirectory(
 		// a swapped parent from being chmodded before its identity is verified.
 		await assertPhysicalWorkflowLaunchRunDirectory(directory, false);
 		if (create) {
-			await runHandle.chmod(0o700);
+			// fchmod on a directory handle fails with EPERM on Windows, where the
+			// run directory inherits the project directory's ACL instead.
+			if (!IS_WIN32) await runHandle.chmod(0o700);
 			directory.runStat = await runHandle.stat();
 		}
 		await assertPhysicalWorkflowLaunchRunDirectory(directory);
@@ -462,7 +478,7 @@ export async function writeWorkflowLaunchCommandArtifact(
 		if (
 			!fileStat.isFile() ||
 			fileStat.nlink !== 1 ||
-			(fileStat.mode & 0o777) !== 0o600 ||
+			!hasPrivateMode(fileStat, 0o600) ||
 			fileStat.size !== bytes.byteLength
 		)
 			throw unsafeWorkflowLaunchArtifactPath();
@@ -477,12 +493,18 @@ export async function writeWorkflowLaunchCommandArtifact(
 			!sameFileIdentity(fileStat, preRenameStat) ||
 			!preRenameStat.isFile() ||
 			preRenameStat.nlink !== 1 ||
-			(preRenameStat.mode & 0o777) !== 0o600 ||
+			!hasPrivateMode(preRenameStat, 0o600) ||
 			preRenameStat.size !== bytes.byteLength
 		)
 			throw unsafeWorkflowLaunchArtifactPath();
 		await assertLaunchArtifactReplaceable(artifactPath);
-		await rename(tempPath, artifactPath);
+		if (IS_WIN32) {
+			const runDirectory = directory;
+			await renameReplacing(tempPath, artifactPath, async () => {
+				await assertPhysicalWorkflowLaunchRunDirectory(runDirectory);
+				await assertLaunchArtifactReplaceable(artifactPath);
+			});
+		} else await rename(tempPath, artifactPath);
 		committed = true;
 		await workflowLaunchArtifactTestHooks.onAfterWriteRename?.({
 			artifactPath,
@@ -497,8 +519,8 @@ export async function writeWorkflowLaunchCommandArtifact(
 			!sameFileIdentity(fileStat, committedStat) ||
 			committedHandleStat.nlink !== 1 ||
 			committedStat.nlink !== 1 ||
-			(committedHandleStat.mode & 0o777) !== 0o600 ||
-			(committedStat.mode & 0o777) !== 0o600 ||
+			!hasPrivateMode(committedHandleStat, 0o600) ||
+			!hasPrivateMode(committedStat, 0o600) ||
 			committedHandleStat.size !== bytes.byteLength ||
 			committedStat.size !== bytes.byteLength
 		)
@@ -587,7 +609,7 @@ export async function readWorkflowLaunchCommandArtifact(
 		if (
 			!openedStat.isFile() ||
 			openedStat.nlink !== 1 ||
-			(openedStat.mode & 0o777) !== 0o600 ||
+			!hasPrivateMode(openedStat, 0o600) ||
 			openedStat.size !== command.bytes
 		)
 			throw unsafeWorkflowLaunchArtifactPath();
@@ -604,7 +626,7 @@ export async function readWorkflowLaunchCommandArtifact(
 			!currentStat.isFile() ||
 			readStat.nlink !== 1 ||
 			currentStat.nlink !== 1 ||
-			(readStat.mode & 0o777) !== 0o600 ||
+			!hasPrivateMode(readStat, 0o600) ||
 			readStat.size !== command.bytes
 		)
 			throw unsafeWorkflowLaunchArtifactPath();
@@ -1015,7 +1037,13 @@ export function managedWorktreePath(
 }
 
 export function toProjectPath(cwd: string, filePath: string): string {
-	return isAbsolute(filePath) ? relative(cwd, filePath) || "." : filePath;
+	if (!isAbsolute(filePath)) return filePath;
+	const projectPath = relative(cwd, filePath) || ".";
+	// Persisted project paths use "/" on every platform (POSIX unchanged).
+	// fromProjectPath() still resolves records written with "\" on win32.
+	return process.platform === "win32"
+		? projectPath.replaceAll("\\", "/")
+		: projectPath;
 }
 
 export function fromProjectPath(cwd: string, filePath: string): string {
@@ -1071,7 +1099,7 @@ export async function writeJsonAtomic(
 		await assertLeaseContextOwnership(lease);
 		await commitFence?.();
 		assertLeaseNotAborted(activeAbortSignal);
-		await rename(temp, file);
+		await renameReplacing(temp, file, () => assertLeaseNotAborted(activeAbortSignal));
 		temporaryCreated = false;
 		if (lease) {
 			await runLeaseTestHooks.onAfterAtomicRename?.({
@@ -1086,7 +1114,12 @@ export async function writeJsonAtomic(
 }
 
 export async function syncFileAndDirectory(file: string): Promise<void> {
-	const fileHandle = await open(file, fsConstants.O_RDONLY);
+	// Windows FlushFileBuffers needs write access, so fsync on a read-only
+	// handle fails with EPERM there. POSIX keeps the read-only open.
+	const fileHandle = await open(
+		file,
+		process.platform === "win32" ? "r+" : fsConstants.O_RDONLY,
+	);
 	try {
 		await fileHandle.sync();
 	} finally {
@@ -1094,7 +1127,7 @@ export async function syncFileAndDirectory(file: string): Promise<void> {
 	}
 	const directoryHandle = await open(dirname(file), fsConstants.O_RDONLY);
 	try {
-		await directoryHandle.sync();
+		await syncDirectoryHandle(directoryHandle);
 	} finally {
 		await directoryHandle.close();
 	}

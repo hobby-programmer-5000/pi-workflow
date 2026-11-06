@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import ts from "typescript";
@@ -9,6 +9,7 @@ import { validateJsonSchema, validateJsonSchemaSubset } from "../../.tmp/unit/js
 import { projectArtifactGraphControl } from "../../.tmp/unit/artifact-graph-runtime.js";
 import { writeJsonAtomic, writeRunRecord } from "../../.tmp/unit/store.js";
 import { completeTask, createWorkflowRunRecord, makeProject, scheduleRun, setSubagentApiForTests, writeAgent, writeStaticRunArtifacts } from "./unit-test-support.mjs";
+import { linkDirectorySync } from "./helpers/platform-support.mjs";
 
 function graph(stages) {
 	return { schemaVersion: 1, defaults: { agent: "unit-scout", tools: ["read"], readOnly: true }, artifactGraph: { stages } };
@@ -183,7 +184,7 @@ test("public TypeScript workflow authors can declare injectRuntimeTask without c
 		const file = join(cwd, "consumer.mts");
 		const scope = join(cwd, "node_modules", "@agwab");
 		mkdirSync(scope, { recursive: true });
-		symlinkSync(resolve("."), join(scope, "pi-workflow"), "dir");
+		linkDirectorySync(resolve("."), join(scope, "pi-workflow"), "dir");
 		writeFileSync(file, `import type { ArtifactGraphStageSpec } from "@agwab/pi-workflow";\nconst stage: ArtifactGraphStageSpec = { id: "report", type: "reduce", from: "scan", prompt: "Report", injectRuntimeTask: true };\nexport { stage };\n`);
 		const program = ts.createProgram([file], { noEmit: true, strict: true, skipLibCheck: true, target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext, typeRoots: [resolve("node_modules/@types")] });
 		const diagnostics = program.getSemanticDiagnostics(program.getSourceFile(file));

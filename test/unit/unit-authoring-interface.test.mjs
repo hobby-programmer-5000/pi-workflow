@@ -245,6 +245,7 @@ import {
 	writeWorkflowTaskArtifactBundle,
 	writeWorkflowWebSource,
 } from "./unit-test-support.mjs";
+import { toPosixPath } from "./helpers/platform-support.mjs";
 
 function parseFixtureJson(text) {
 	try {
@@ -3086,7 +3087,7 @@ test("workflow helper loader resolves directory-local helpers", async () => {
 			specPath,
 		);
 		assert.equal(
-			resolved.path.endsWith("/workflows/bundle/helpers/audit.mjs"),
+			toPosixPath(resolved.path).endsWith("/workflows/bundle/helpers/audit.mjs"),
 			true,
 		);
 

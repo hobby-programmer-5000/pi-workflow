@@ -18,6 +18,7 @@ import {
 } from "../../.tmp/unit/engine-format.js";
 import { loadWorkflowSpec } from "../../.tmp/unit/schema.js";
 import { resolveWorkflowRef } from "../../.tmp/unit/workflow-specs.js";
+import { esmSpecifier } from "./helpers/platform-support.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const cli = join(root, "src", "cli.mjs");
@@ -273,7 +274,7 @@ test("scaffold evidence gate verifies quotes against cited file ranges and demot
 			join(cwd, "src", "cache.ts"),
 			["line one", "  set(key) {", "    if (this.size > this.max) {", "      evict();", "    }", "  }", ""].join("\n"),
 		);
-		const { default: gate } = await import(`${evidenceGateHelper}?t=${Date.now()}`);
+		const { default: gate } = await import(`${esmSpecifier(evidenceGateHelper)}?t=${Date.now()}`);
 		const finding = (id, extra) => ({
 			findingId: id,
 			title: id,

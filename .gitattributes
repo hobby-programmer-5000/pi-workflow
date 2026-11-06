@@ -1,0 +1,4 @@
+# Check out text files with LF on every platform. Several tests hash or
+# compare tracked source bytes, and Git for Windows defaults to
+# core.autocrlf=true, which would rewrite them as CRLF.
+* text=auto eol=lf

@@ -84,11 +84,23 @@ async function noticeRoot(cwd: string): Promise<string> {
 }
 
 async function readRegular(file: string): Promise<string> {
+	// Native Windows has no O_NOFOLLOW, and open() follows a symlink there:
+	// refuse a link at the name first, then require the opened handle to be
+	// that same file (bigint IDs, since NTFS file IDs can exceed 2^53). Both
+	// fail with the ELOOP that O_NOFOLLOW gives on POSIX, which is unchanged.
+	const named =
+		process.platform === "win32" ? await lstat(file, { bigint: true }) : undefined;
+	if (named?.isSymbolicLink()) throw noFollowError(file);
 	const handle = await open(
 		file,
-		constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+		constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0),
 	);
 	try {
+		if (named) {
+			const opened = await handle.stat({ bigint: true });
+			if (opened.dev !== named.dev || opened.ino !== named.ino)
+				throw noFollowError(file);
+		}
 		const info = await handle.stat();
 		if (!info.isFile() || info.nlink !== 1)
 			throw new Error("Unsafe workflow notices file.");
@@ -100,6 +112,13 @@ async function readRegular(file: string): Promise<string> {
 		await handle.close();
 	}
 }
+function noFollowError(file: string): NodeJS.ErrnoException {
+	return Object.assign(
+		new Error(`ELOOP: too many symbolic links encountered, open '${file}'`),
+		{ code: "ELOOP", syscall: "open", path: file },
+	);
+}
+
 async function sidecarBytes(root: string): Promise<string | undefined> {
 	try {
 		return await readRegular(join(root, SIDECAR));

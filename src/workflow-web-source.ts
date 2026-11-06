@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, open, readFile, readdir, rename, rm, unlink } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 import {
 	appendPrivateFile,
@@ -1929,6 +1929,10 @@ async function reapStaleSourceIndexLock(
 				currentOwner.dev !== owner.dev || currentOwner.ino !== owner.ino ||
 				currentValue.ownerId !== value.ownerId || currentValue.generation !== value.generation) return;
 			const tombstone = `${lockDir}.releasing-${randomUUID()}`;
+			// Windows refuses to rename a directory while a file inside it is
+			// open (EPERM); the guard file's presence is what matters, so close
+			// its handle first there. POSIX keeps it open across the rename.
+			if (process.platform === "win32") { await guard.close(); guard = undefined; }
 			await rename(lockDir, tombstone);
 			guarded = false;
 			await rm(tombstone, { recursive: true, force: true });
@@ -1965,6 +1969,8 @@ async function releaseSourceIndexLock(
 				guardedOwner.dev !== fence.owner.dev || guardedOwner.ino !== fence.owner.ino ||
 				guardedValue.ownerId !== fence.ownerId || guardedValue.generation !== fence.generation) return;
 			const tombstone = `${lockDir}.releasing-${randomUUID()}`;
+			// See above: close the guard handle before renaming on Windows.
+			if (process.platform === "win32") { await guard.close(); guard = undefined; }
 			await rename(lockDir, tombstone);
 			guarded = false;
 			await rm(tombstone, { recursive: true, force: true });
@@ -2003,7 +2009,8 @@ function sourceObjectPath(
 	}
 	const sourcesDir = resolve(config.cacheDir, "sources");
 	const path = resolve(sourcesDir, `${sourceRef}.json`);
-	if (!path.startsWith(`${sourcesDir}/`)) {
+	// `sep` is "/" on POSIX; resolve() returns backslash paths on win32.
+	if (!path.startsWith(`${sourcesDir}${sep}`)) {
 		throw new Error("workflow web sourceRef escaped source cache");
 	}
 	return path;

@@ -36,6 +36,7 @@ import {
 } from "../../.tmp/unit/extension.js";
 import { summarizeWorkflowTerminal } from "../../.tmp/unit/workflow-terminal.js";
 import { artifactGraphWorkflowSpec } from "./unit-test-support.mjs";
+import { canCreateSymlinks, isWin32, needsSymlinks, SYMLINK_SKIP_REASON } from "./helpers/platform-support.mjs";
 
 function fakePi(tools) {
 	return {
@@ -1635,7 +1636,7 @@ test("workflow preview ignores sidecar traversal paths", async () => {
 	}
 });
 
-test("completion report links reject display injection and symlink escapes", async () => {
+test("completion report links reject display injection and symlink escapes", isWin32 && !canCreateSymlinks() ? { skip: `newline file names are invalid on NTFS; ${SYMLINK_SKIP_REASON}` } : {}, async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "workflow-report-link-safety-"));
 	try {
 		const cases = [
@@ -1665,7 +1666,14 @@ test("completion report links reject display injection and symlink escapes", asy
 				},
 			},
 		];
-		for (const item of cases) {
+		// NTFS rejects a newline in a file name, and file symlinks need symlink
+		// rights on win32; run only the cases the platform can stage.
+		const runnable = cases.filter((item) =>
+			item.runId === "workflow_report_link_injection"
+				? !isWin32
+				: canCreateSymlinks(),
+		);
+		for (const item of runnable) {
 			const run = runRecord(cwd, { runId: item.runId });
 			await writeRunFixture(cwd, run, {
 				completionSummaryMarkdown: "Safe authoritative summary.",
@@ -1750,7 +1758,7 @@ test("completion report links reject injected task-directory display paths", asy
 	}
 });
 
-test("workflow preview rejects a control.json symlink escape", async () => {
+test("workflow preview rejects a control.json symlink escape", needsSymlinks(), async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "workflow-control-link-safety-"));
 	try {
 		const run = runRecord(cwd, { runId: "workflow_control_link_escape" });

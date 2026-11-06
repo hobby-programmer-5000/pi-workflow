@@ -46,10 +46,17 @@ if (invoked !== "npm") {
 }
 const realNpm = process.env.PI_WORKFLOW_E2E_REAL_NPM;
 if (!realNpm) throw new Error("PI_WORKFLOW_E2E_REAL_NPM is required");
-const result = spawnSync(realNpm, args, {
-	stdio: "inherit",
-	env: process.env,
-});
+// On Windows the runner hands over npm's JS entry (npm-cli.js), because the
+// npm.cmd launcher cannot be spawned without a shell; run it with Node.
+const result = /\.c?js$/u.test(realNpm)
+	? spawnSync(process.execPath, [realNpm, ...args], {
+			stdio: "inherit",
+			env: process.env,
+		})
+	: spawnSync(realNpm, args, {
+			stdio: "inherit",
+			env: process.env,
+		});
 if (result.error) throw result.error;
 if (result.signal) process.kill(process.pid, result.signal);
 process.exit(result.status ?? 1);

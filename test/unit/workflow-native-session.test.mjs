@@ -13,12 +13,18 @@ const jiti = require("../../node_modules/jiti/lib/jiti.cjs")(import.meta.url, {
 	fsCache: false,
 });
 const sourceRoot = fileURLToPath(new URL("../../src/", import.meta.url));
-const nativeContext = await jiti.import(
-	join(sourceRoot, "workflow-native-host-context.ts"),
-);
+// On Windows jiti caches a module imported directly under a forward-slash key
+// but the same file imported from another module under its native backslash
+// path, so a direct import would load a second, separate context registry.
+// There, load the extension first and reuse the context copy it imported.
+const contextPath = join(sourceRoot, "workflow-native-host-context.ts");
+let nativeContext;
+if (process.platform !== "win32") nativeContext = await jiti.import(contextPath);
 const { registerWorkflowNativeHost } = await jiti.import(
 	join(sourceRoot, "workflow-native-host-extension.ts"),
 );
+nativeContext ??=
+	require.cache[contextPath]?.exports ?? (await jiti.import(contextPath));
 const { compileWorkflow } = await jiti.import(join(sourceRoot, "compiler.ts"));
 const store = await jiti.import(join(sourceRoot, "store.ts"));
 

@@ -3348,7 +3348,8 @@ test("workflow index preserves run linkage without embedding task rows", async (
 		assert.equal(indexed.taskSummary.total, run.tasks.length);
 		assert.equal(
 			indexed.runJson,
-			join(".pi", "workflows", run.runId, "run.json"),
+			// Stored project paths use "/" on every platform.
+			[".pi", "workflows", run.runId, "run.json"].join("/"),
 		);
 		assert.equal(Object.hasOwn(indexed, "tasks"), false);
 	} finally {

@@ -46,6 +46,10 @@ test("resource policy reaches bundled argv and locked SDK discovery", async (t) 
 				for (const inheritProjectContext of version === 1 ? [undefined, false, true] : [true]) {
 					await t.test(`${version ?? "legacy"}/${inheritSkills}/${inheritProjectContext}`, async () => {
 						const cwd = makeProject();
+						// Pi collects .agents/skills from every ancestor up to the git
+						// root. Windows TEMP lives under the user profile, so without a
+						// root marker that walk reaches the real ~/.agents/skills.
+						if (process.platform === "win32") mkdirSync(join(cwd, ".git"));
 						const agentDir = join(cwd, "resource-home");
 						writeSkill(join(cwd, ".pi/skills/ambient/SKILL.md"), "ambient");
 						writeFixture(join(cwd, "AGENTS.md"), "CONTEXT_SHOULD_NOT_LOAD\n");

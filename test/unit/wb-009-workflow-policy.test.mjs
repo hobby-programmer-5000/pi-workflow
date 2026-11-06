@@ -5,6 +5,8 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { bashCommand, bashPath } from "./helpers/platform-support.mjs";
 
 import { parse as parseYaml } from "yaml";
 
@@ -86,7 +88,7 @@ test("WB-009 artifacts preserve ZIP and extraction defaults, bind publication ev
 	}
 });
 
-test("WB-009 build and source tag checks peel annotated tags and accept lightweight tags offline", async () => {
+test("WB-009 build and source tag checks peel annotated tags and accept lightweight tags offline", bashCommand() ? {} : { skip: "win32 without Git for Windows bash" }, async () => {
 	const scripts = runScripts();
 	const jobs = ["build", "source"];
 	const fixtures = ["annotated-ls-remote.txt", "lightweight-ls-remote.txt"];
@@ -105,11 +107,11 @@ test("WB-009 build and source tag checks peel annotated tags and accept lightwei
 				const fakeGit = join(cwd, "git");
 				await writeFile(fakeGit, '#!/usr/bin/env bash\nset -euo pipefail\ntest "$#" -eq 4\ntest "$1" = ls-remote\ntest "$2" = origin\ntest "$3" = "refs/tags/v$TARGET_VERSION"\ntest "$4" = "refs/tags/v$TARGET_VERSION^{}"\ncat "$FIXTURE"\n');
 				await chmod(fakeGit, 0o755);
-				const fixturePath = new URL(fixture, fixtureRoot).pathname;
-				const result = spawnSync("bash", ["-c", tagScript], {
+				const fixturePath = fileURLToPath(new URL(fixture, fixtureRoot));
+				const result = spawnSync(bashCommand(), ["-c", tagScript], {
 					cwd: cwd,
 					encoding: "utf8",
-					env: { ...process.env, PATH: `${cwd}:${process.env.PATH}`, TARGET_VERSION: "0.12.0", EXPECTED_SHA: expectedSha, FIXTURE: fixturePath },
+					env: { ...process.env, PATH: bashPath(cwd), TARGET_VERSION: "0.12.0", EXPECTED_SHA: expectedSha, FIXTURE: fixturePath },
 				});
 				assert.equal(result.status, 0, `${job}/${fixture}: ${result.stderr}`);
 			} finally {
@@ -421,7 +423,7 @@ esac
 });
 
 test("WB-009 exact graph checker rejects privilege and producer drift", () => {
-	const result = spawnSync(process.execPath, [checkerPath.pathname], { encoding: "utf8" });
+	const result = spawnSync(process.execPath, [fileURLToPath(checkerPath)], { encoding: "utf8" });
 	assert.equal(result.status, 0, result.stderr);
 	const report = JSON.parse(result.stdout);
 	assert.equal(report.privilegeSeparated, true);

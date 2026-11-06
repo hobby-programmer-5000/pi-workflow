@@ -5,7 +5,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import {
 	dirname,
@@ -763,6 +763,27 @@ async function workflowTerminalToolResult(
 	}
 }
 
+/** Package root of the Pi CLI running this process, if it is one. */
+function runningPiPackageRoot(): string | undefined {
+	const entry = process.argv[1];
+	if (!entry) return undefined;
+	try {
+		let current = dirname(realpathSync(entry));
+		while (current !== dirname(current)) {
+			const manifest = join(current, "package.json");
+			if (
+				existsSync(manifest) &&
+				JSON.parse(readFileSync(manifest, "utf8")).name === "@earendil-works/pi-coding-agent"
+			)
+				return current;
+			current = dirname(current);
+		}
+	} catch {
+		// Not a file path, or an unreadable manifest: nothing to pass on.
+	}
+	return undefined;
+}
+
 function spawnDetachedSupervisor(
 	cwd: string,
 	runId: string,
@@ -771,10 +792,16 @@ function spawnDetachedSupervisor(
 	const logPath = join(cwd, ".pi", "workflows", runId, "supervise.log");
 	const fd = openSync(logPath, "a");
 	try {
+		const piRoot = runningPiPackageRoot();
 		const child = spawn(process.execPath, [cliPath, "supervise", runId], {
 			cwd,
 			detached: process.env.PI_WORKFLOW_CONTAIN_DETACHED_SUPERVISOR !== "1",
 			stdio: ["ignore", fd, fd],
+			// The supervisor runs outside Pi: tell it which Pi started it, since a
+			// git install has no copy of the packages Pi provides.
+			...(piRoot === undefined
+				? {}
+				: { env: { ...process.env, PI_SUBAGENT_PI_PACKAGE_ROOT: piRoot } }),
 		});
 		child.unref();
 		return { pid: child.pid, logPath };
@@ -2027,12 +2054,17 @@ function safeWorkflowArtifactDisplayPath(
 	cwd: string,
 	artifactPath: string,
 ): string | undefined {
-	const displayPath = relative(resolvePath(cwd), resolvePath(artifactPath));
+	const nativeDisplayPath = relative(resolvePath(cwd), resolvePath(artifactPath));
+	// win32 relative() always separates with "\", which can never be part of
+	// a file name there, so display "/" instead. The backslash rejection below
+	// keeps guarding POSIX, where "\" can be a name character (sep is "/").
+	const displayPath =
+		sep === "\\" ? nativeDisplayPath.replaceAll("\\", "/") : nativeDisplayPath;
 	if (
 		!displayPath ||
 		/[\u0000-\u001f\u007f`\\]/u.test(displayPath) ||
 		displayPath === ".." ||
-		displayPath.startsWith(".." + sep) ||
+		displayPath.startsWith("../") ||
 		isAbsolutePath(displayPath)
 	)
 		return undefined;

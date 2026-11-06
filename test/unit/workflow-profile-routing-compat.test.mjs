@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { collectWorkflowProfileStageSlots, workflowDefinitionFingerprint } from "../../.tmp/unit/execution-profile.js";
 import {
@@ -149,7 +149,7 @@ test("legacy full-definition settings remain readable and an explicit save prese
 	assert.equal(loaded.preference.selectedProfile, "custom");
 	assert.equal(loaded.preference.definitionFingerprint, loaded.identity.definitionFingerprint);
 	assert.notEqual(loaded.identity.settingsFile, legacyPath);
-	assert.deepEqual(readdirSync(dirname(legacyPath)), [legacyPath.split("/").at(-1)]);
+	assert.deepEqual(readdirSync(dirname(legacyPath)), [basename(legacyPath)]);
 	assert.equal((await resolveSavedWorkflowExecutionProfile(context)).stageOverrides.review.thinking, "low");
 	await saveWorkflowProfilePreference(context, { selectedProfile: "codex-high" });
 	const saved = await loadWorkflowProfilePreference(context.spec, context.specPath);

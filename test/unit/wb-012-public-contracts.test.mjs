@@ -14,7 +14,10 @@ test("workflow name resolution follows documented priority and same-root ambigui
 	const cwd = await mkdtemp(join(tmpdir(), "pi-workflow-resolution-contract-"));
 	const home = join(cwd, "home");
 	const previousHome = process.env.HOME;
+	// os.homedir() reads USERPROFILE on Windows.
+	const previousProfile = process.env.USERPROFILE;
 	process.env.HOME = home;
+	if (process.platform === "win32") process.env.USERPROFILE = home;
 	try {
 		const validSpec = `${JSON.stringify({ schemaVersion: 1, defaults: { agent: "scout", readOnly: true, tools: ["read"] }, artifactGraph: { stages: [{ id: "main", type: "single", prompt: "Check." }] } })}\n`;
 		const shared = join(cwd, "workflows", "deep-review", "spec.json");
@@ -60,6 +63,10 @@ test("workflow name resolution follows documented priority and same-root ambigui
 	} finally {
 		if (previousHome === undefined) delete process.env.HOME;
 		else process.env.HOME = previousHome;
+		if (process.platform === "win32") {
+			if (previousProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = previousProfile;
+		}
 		await rm(cwd, { recursive: true, force: true });
 	}
 });

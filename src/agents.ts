@@ -1,3 +1,4 @@
+import { stripUtf8Bom } from "./authored-file-text.js";
 import type { Dirent } from "node:fs";
 import { lstat, open, opendir, readdir, readFile, realpath } from "node:fs/promises";
 import {
@@ -550,10 +551,13 @@ async function listMarkdownFiles(
 	}
 }
 
-function splitFrontmatter(markdown: string): {
+function splitFrontmatter(authoredMarkdown: string): {
 	frontmatter: Record<string, unknown>;
 	body: string;
 } {
+	// A leading BOM would hide the frontmatter and silently drop the agent's
+	// tool ceiling and model settings.
+	const markdown = stripUtf8Bom(authoredMarkdown);
 	if (!markdown.startsWith("---")) return { frontmatter: {}, body: markdown };
 
 	const lines = markdown.split(/\r?\n/);

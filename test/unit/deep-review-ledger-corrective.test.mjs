@@ -6,7 +6,6 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
-	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +13,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { validateJsonSchema } from "../../.tmp/unit/json-schema.js";
+import { linkDirectorySync } from "./helpers/platform-support.mjs";
 
 const workflowRoot = join(process.cwd(), "workflows", "deep-review");
 const root = join(workflowRoot, "helpers");
@@ -154,7 +154,7 @@ test("deep-review verifies exact read/OCR coverage and fails partial rendering c
 		join(coverageRoot, "outside-ocr", "linked.ocr.txt"),
 		artifactBytes,
 	);
-	symlinkSync(
+	linkDirectorySync(
 		join(coverageRoot, "outside-ocr"),
 		join(coverageRoot, ".pi", "ocr-artifacts", "linked"),
 		"dir",

@@ -625,7 +625,7 @@ test("deep-research local url evidence is byte-gated rather than accepted as a w
   );
 });
 
-test("deep-research final packet bounds the required synthesis read and rejects incomplete floors", async () => {
+test("deep-research final packet bounds the required synthesis read and rejects incomplete floors", async (t) => {
   const candidates = Array.from({ length: 48 }, (_, i) => ({
     id: `claim-${i + 1}`,
     claim: "A grounded claim.",
@@ -747,12 +747,21 @@ test("deep-research final packet bounds the required synthesis read and rejects 
   });
   assert.equal(hostile.reportMarkdown.includes("<em>"), false);
   assert.doesNotMatch(hostile.reportMarkdown, /\[click\]\(javascript:/);
+  // win32 resolves "/dev/null" to a creatable C:\dev\null directory; a regular
+  // file as cwd blocks the sidecar write there instead.
+  let unwritableCwd = "/dev/null";
+  if (process.platform === "win32") {
+    const blockDir = await mkdtemp(join(tmpdir(), "deep-research-sidecar-block-"));
+    t.after(() => rm(blockDir, { recursive: true, force: true }));
+    unwritableCwd = join(blockDir, "not-a-directory");
+    await writeFile(unwritableCwd, "");
+  }
   const sidecarFailure = await render({
     sources: {
       "final-audit.main": cleanSynthesis,
       "final-audit-packet.main": packet,
     },
-    context: { cwd: "/dev/null", runId: "r", taskId: "t" },
+    context: { cwd: unwritableCwd, runId: "r", taskId: "t" },
   });
   assert.equal(sidecarFailure.sidecarErrors.length, 1);
   assert.equal(sidecarFailure.gates.sidecarWriteSucceeded, false);

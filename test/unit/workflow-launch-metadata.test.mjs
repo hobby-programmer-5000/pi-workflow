@@ -26,6 +26,7 @@ import {
 	workflowRunPath,
 	writeWorkflowLaunchCommandArtifact,
 } from "../../.tmp/unit/store.js";
+import { needsOpenDirectoryRename, needsSymlinks } from "./helpers/platform-support.mjs";
 
 function launchWith(command) {
 	return {
@@ -49,8 +50,11 @@ test("launch command artifact is exact, private, integrity-linked, and absent fr
 		const artifact = join(workflowRunDir(cwd, runId), "launch-command.txt");
 
 		assert.equal(await readFile(artifact, "utf8"), text);
-		assert.equal((await stat(artifact)).mode & 0o777, 0o600);
-		assert.equal((await stat(workflowRunDir(cwd, runId))).mode & 0o777, 0o700);
+		// Windows file modes carry no POSIX permission bits.
+		if (process.platform !== "win32") {
+			assert.equal((await stat(artifact)).mode & 0o777, 0o600);
+			assert.equal((await stat(workflowRunDir(cwd, runId))).mode & 0o777, 0o700);
+		}
 		assert.equal(command.bytes, Buffer.byteLength(text, "utf8"));
 		assert.match(command.sha256, /^[0-9a-f]{64}$/);
 		assert.equal(await readWorkflowLaunchCommandArtifact(cwd, run), text);
@@ -114,16 +118,20 @@ test("launch metadata validation is closed and artifact reads fail closed on tam
 			/metadata malformed/,
 		);
 
-		await writeWorkflowLaunchCommandArtifact(
-			cwd,
-			runId,
-			"/workflow dynamic secret",
-		);
-		await chmod(join(workflowRunDir(cwd, runId), "launch-command.txt"), 0o644);
-		await assert.rejects(
-			() => readWorkflowLaunchCommandArtifact(cwd, run),
-			/verification failed/,
-		);
+		// A widened POSIX mode fails verification; Windows has no mode bits to
+		// widen (the product skips mode checks there by design).
+		if (process.platform !== "win32") {
+			await writeWorkflowLaunchCommandArtifact(
+				cwd,
+				runId,
+				"/workflow dynamic secret",
+			);
+			await chmod(join(workflowRunDir(cwd, runId), "launch-command.txt"), 0o644);
+			await assert.rejects(
+				() => readWorkflowLaunchCommandArtifact(cwd, run),
+				/verification failed/,
+			);
+		}
 	} finally {
 		await rm(cwd, { recursive: true, force: true });
 	}
@@ -280,7 +288,7 @@ test("v2 auto launch metadata is distinct, strict, and cannot widen v1", async (
 });
 
 test("launch artifact rejects symlinked workflow roots, run directories, and artifacts", {
-	skip: process.platform === "win32",
+	...needsSymlinks(),
 }, async () => {
 	const secret = "/workflow run symlink-sensitive";
 	const rootCwd = await mkdtemp(join(tmpdir(), "piwf-launch-root-link-"));
@@ -349,7 +357,7 @@ test("launch artifact rejects symlinked workflow roots, run directories, and art
 });
 
 test("launch artifact read and commit reject path swaps without disclosing command bytes", {
-	skip: process.platform === "win32",
+	...needsOpenDirectoryRename(),
 }, async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "piwf-launch-swap-"));
 	const outside = await mkdtemp(join(tmpdir(), "piwf-launch-swap-outside-"));
@@ -406,7 +414,6 @@ test("launch artifact read and commit reject path swaps without disclosing comma
 });
 
 test("launch artifact hard-link races fail closed and zero escaped command bytes", {
-	skip: process.platform === "win32",
 }, async () => {
 	const cwd = await mkdtemp(join(tmpdir(), "piwf-launch-hardlink-"));
 	const outside = await mkdtemp(join(tmpdir(), "piwf-launch-hardlink-outside-"));

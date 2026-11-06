@@ -21,7 +21,9 @@ async function recordInChild(home, model, backoffMs) {
 		process.execPath,
 		["--input-type=module", "-e", script, backendModuleUrl, model, String(backoffMs)],
 		{
-			env: { ...process.env, HOME: home },
+			// os.homedir() reads USERPROFILE on Windows; set both so the child
+			// never writes into the real home there.
+			env: { ...process.env, HOME: home, USERPROFILE: home },
 			maxBuffer: 1024 * 1024,
 		},
 	);

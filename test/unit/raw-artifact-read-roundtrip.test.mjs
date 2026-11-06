@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { writeWorkflowTaskArtifactBundle, setTaskArtifactLinkForTests } from "../../.tmp/unit/workflow-output-artifacts.js";
 import { handleWorkflowArtifactToolCall, readWorkflowArtifact, setArtifactValidatedHookForTests } from "../../.tmp/unit/workflow-artifact-tool.js";
 import { checkRequiredArtifactReads } from "../../.tmp/unit/subagent-backend.js";
+import { needsSymlinks } from "./helpers/platform-support.mjs";
 
 const raw = '<control>{"schema":"stage-control-v1","digest":"done"}</control>\n<analysis>Evidence</analysis>\n<refs>[]</refs>';
 async function fixture(t) {
@@ -38,7 +39,7 @@ for (const attemptLink of [false, true]) {
 }
 
 for (const kind of ["hardlink", "symlink", "outside", "late-hardlink"]) {
- test(`raw reader rejects arbitrary ${kind} evidence`, async (t) => {
+ test(`raw reader rejects arbitrary ${kind} evidence`, kind === "symlink" ? needsSymlinks() : {}, async (t) => {
   const f = await fixture(t), secret = join(f.root, "secret"), target = join(f.producer, "raw.md");
   await writeFile(secret, "secret");
   if (kind === "hardlink") await link(secret, target);

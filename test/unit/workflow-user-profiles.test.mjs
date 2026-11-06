@@ -38,6 +38,7 @@ import {
 	renderWorkflowProfilePreview,
 	selectWorkflowProfileTarget,
 } from "../../.tmp/unit/workflow-profile-tui.js";
+import { canCreateSymlinks, linkDirectorySync, needsSymlinks } from "./helpers/platform-support.mjs";
 
 const ROOT = mkdtempSync(join(tmpdir(), "pi-workflow-user-profiles-"));
 const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
@@ -476,8 +477,11 @@ test("private atomic preferences reuse identical definitions and separate change
 		{ selectedProfile: "mixed" },
 	);
 	const identity = await workflowProfileIdentity(spec, workflowPath);
-	assert.equal(statSync(identity.settingsFile).mode & 0o777, 0o600);
-	assert.equal(statSync(dirname(identity.settingsFile)).mode & 0o777, 0o700);
+	// Windows file modes carry no POSIX permission bits.
+	if (process.platform !== "win32") {
+		assert.equal(statSync(identity.settingsFile).mode & 0o777, 0o600);
+		assert.equal(statSync(dirname(identity.settingsFile)).mode & 0o777, 0o700);
+	}
 	assert.throws(
 		() => statSync(join(dirname(identity.settingsFile), ".settings.lock")),
 		/ENOENT/,
@@ -680,13 +684,19 @@ test("invalid, corrupt, and simultaneous writes preserve complete unrelated sett
 		/not a stable regular file.*file was not changed/s,
 	);
 	rmSync(identity.settingsFile, { recursive: true });
-	symlinkSync(unrelatedFile, identity.settingsFile);
-	await assert.rejects(
-		() => loadWorkflowProfilePreference(spec, workflowPath),
-		/ELOOP|symbolic|too many symbolic links/i,
-	);
-	assert.equal(readFileSync(unrelatedFile, "utf8"), "keep-me\n");
-	rmSync(identity.settingsFile);
+	// A file symlink needs symlink rights on win32; the other cases still run.
+	if (canCreateSymlinks()) {
+		symlinkSync(unrelatedFile, identity.settingsFile);
+		await assert.rejects(
+			() => loadWorkflowProfilePreference(spec, workflowPath),
+			// win32 has no O_NOFOLLOW; the secure path check refuses the link by name.
+			process.platform === "win32"
+				? /must not be a symlink or junction/i
+				: /ELOOP|symbolic|too many symbolic links/i,
+		);
+		assert.equal(readFileSync(unrelatedFile, "utf8"), "keep-me\n");
+		rmSync(identity.settingsFile);
+	}
 
 	writeFileSync(identity.settingsFile, "{ definitely broken");
 	const corruptBytes = readFileSync(identity.settingsFile, "utf8");
@@ -705,7 +715,7 @@ test("invalid, corrupt, and simultaneous writes preserve complete unrelated sett
 	assert.equal(readFileSync(identity.settingsFile, "utf8"), corruptBytes);
 });
 
-test("unsafe settings lock evidence is rejected and never reclaimed", async () => {
+test("unsafe settings lock evidence is rejected and never reclaimed", needsSymlinks(), async () => {
 	const { workflowPath } = setup("unsafe-settings-lock");
 	const spec = roleSpec();
 	writeSpec(workflowPath, spec);
@@ -737,7 +747,7 @@ test("preference reads and writes reject a symlinked settings ancestor", async (
 	const outside = join(ROOT, "unsafe-settings-outside");
 	mkdirSync(agentDir, { recursive: true });
 	mkdirSync(outside, { recursive: true });
-	symlinkSync(outside, join(agentDir, "workflow-profiles"), "dir");
+	linkDirectorySync(outside, join(agentDir, "workflow-profiles"), "dir");
 	await assert.rejects(
 		() => loadWorkflowProfilePreference(spec, workflowPath),
 		/not a directory|must not be a symlink/,
