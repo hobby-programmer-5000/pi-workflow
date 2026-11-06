@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -15,6 +15,7 @@ import {
 	withRunLease,
 	writeStaticRunArtifacts,
 } from "../../.tmp/unit/store.js";
+import { linkDirectory } from "./helpers/platform-support.mjs";
 
 const parsed = {
 	protocol: "workflow-output-sections-v1",
@@ -220,7 +221,7 @@ test("prune skips symlinked run directories outside the workflow root", async ()
 	try {
 		await mkdir(join(cwd, ".pi", "workflows"), { recursive: true });
 		await writeRun(outside, terminalRun("workflow-outside", "2020-01-01T00:00:00.000Z"));
-		await symlink(join(outside, ".pi", "workflows", "workflow-outside"), join(cwd, ".pi", "workflows", "workflow-link"));
+		await linkDirectory(join(outside, ".pi", "workflows", "workflow-outside"), join(cwd, ".pi", "workflows", "workflow-link"));
 		const summary = await pruneWorkflowRuns(cwd, { keep: 0, yes: true });
 		assert.equal(summary.runs.length, 0);
 		await stat(join(outside, ".pi", "workflows", "workflow-outside", "run.json"));

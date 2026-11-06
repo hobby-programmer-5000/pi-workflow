@@ -39,6 +39,7 @@ import {
 	validateFixedInventoryBinding,
 } from "../../skills/workflow-guide/scaffolds/fixed-inventory/initialize.mjs";
 import fixedInventoryPipeline from "../../skills/workflow-guide/scaffolds/fixed-inventory/helpers/pipeline.mjs";
+import { canCreateSymlinks, linkDirectory } from "./helpers/platform-support.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -294,7 +295,7 @@ test("fixed-inventory initializer validates before mutation and never clobbers",
 	const realDestination = join(temp, "real-destination");
 	const linkedDestination = join(temp, "linked-destination");
 	await mkdir(realDestination);
-	await symlink(realDestination, linkedDestination);
+	await linkDirectory(realDestination, linkedDestination);
 	await assert.rejects(
 		initializeFixedInventoryBundle(binding(), linkedDestination),
 		/destination cannot be a symlink/,
@@ -305,11 +306,14 @@ test("fixed-inventory initializer validates before mutation and never clobbers",
 	await writeFile(bindingFile, JSON.stringify(binding()));
 	assert.deepEqual(await readFixedInventoryBindingFile(bindingFile), binding());
 	const linkedBinding = join(temp, "linked-binding.json");
-	await symlink(bindingFile, linkedBinding);
-	await assert.rejects(
-		readFixedInventoryBindingFile(linkedBinding),
-		/binding file cannot be a symlink/,
-	);
+	// A file symlink needs symlink rights on win32; the other checks still run.
+	if (canCreateSymlinks()) {
+		await symlink(bindingFile, linkedBinding);
+		await assert.rejects(
+			readFixedInventoryBindingFile(linkedBinding),
+			/binding file cannot be a symlink/,
+		);
+	}
 	const malformed = join(temp, "malformed.json");
 	await writeFile(malformed, "{");
 	await assert.rejects(readFixedInventoryBindingFile(malformed), /not valid JSON/);

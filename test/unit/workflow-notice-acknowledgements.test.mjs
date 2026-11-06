@@ -29,6 +29,7 @@ import {
 	readRunRecord,
 	setRunLeaseTestHooksForTests,
 } from "../../.tmp/unit/store.js";
+import { canCreateSymlinks, linkDirectory } from "./helpers/platform-support.mjs";
 
 const exec = promisify(execFile);
 const cli = resolve("src/cli.mjs");
@@ -453,6 +454,9 @@ test("symlink and hard-link evidence escapes are rejected without touching valid
 		"hard-linked-sidecar",
 		"hard-linked-lock",
 	]) {
+		// Directory links fall back to junctions on win32 without symlink rights;
+		// file symlinks cannot, so those three cases are left out there.
+		if (!canCreateSymlinks() && ["run-file", "sidecar", "lock"].includes(target)) continue;
 		const cwd = await project(t);
 		const outside = await project(t);
 		await fixture(cwd, "workflow_escape");
@@ -491,6 +495,7 @@ test("symlink and hard-link evidence escapes are rejected without touching valid
 		}
 		await rm(path, { recursive: true, force: true });
 		if (target.startsWith("hard-linked-")) await link(destination, path);
+		else if ([".pi", "workflows", "run-dir"].includes(target)) await linkDirectory(destination, path);
 		else await symlink(destination, path);
 		const before = await hashes(outside);
 		await assert.rejects(

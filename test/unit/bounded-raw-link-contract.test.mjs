@@ -7,6 +7,7 @@ import { writeWorkflowTaskArtifactBundle as writeBundle, setTaskArtifactLinkForT
 import { readWorkflowArtifact, handleWorkflowArtifactToolCall, setArtifactValidatedHookForTests, setArtifactReadHookForTests } from '../../.tmp/unit/workflow-artifact-tool.js';
 import { checkRequiredArtifactReads } from '../../.tmp/unit/subagent-backend.js';
 import { parseManagedWorktreePath } from '../../.tmp/unit/workflow-raw-contract.js';
+import { linkDirectory, needsOpenDirectoryRename } from './helpers/platform-support.mjs';
 
 // Explicit host publication fixture. Low-level writer round trips separately
 // omit this context and must remain independent; no result digest is promoted.
@@ -67,8 +68,8 @@ for (const legacy of [true,false]) for (const kind of ['extra-link','foreign-sou
  if(kind==='late-link') setArtifactValidatedHookForTests(()=>link(f.artifact,join(f.root,'late')));
  if(kind==='late-output-substitution') setArtifactValidatedHookForTests(async()=>{await unlink(f.output); await writeFile(f.output,raw); await link(f.artifact,join(f.root,'replacement'));});
  if(kind==='generation-change') setArtifactValidatedHookForTests(async()=>{f.run.tasks[0].generation=2; await writeFile(join(f.runDir,'run.json'),JSON.stringify(f.run));});
- if(kind==='root-symlink') {const moved=join(f.root,'moved'); await rename(join(f.root,'.pi','workflows'),moved); await symlink(moved,join(f.root,'.pi','workflows'));}
- if(kind==='task-symlink') {const moved=join(f.root,'moved'); await rename(f.taskDir,moved); await symlink(moved,f.taskDir);}
+ if(kind==='root-symlink') {const moved=join(f.root,'moved'); await rename(join(f.root,'.pi','workflows'),moved); await linkDirectory(moved,join(f.root,'.pi','workflows'));}
+ if(kind==='task-symlink') {const moved=join(f.root,'moved'); await rename(f.taskDir,moved); await linkDirectory(moved,f.taskDir);}
  await assert.rejects(f.read);
 });
 for(const phase of ['before','after']) test(`new linked publication source mutation ${phase} falls back to authoritative bytes`,async t=>{
@@ -242,7 +243,7 @@ test('writer source-inode substitution before link cannot publish substituted by
  await writeWorkflowTaskArtifactBundle({taskDir:f.taskDir,rawOutput:raw});
  assert.equal(await readFile(f.artifact,'utf8'),raw);assert.equal((await stat(f.artifact)).nlink,1);
 });
-test('writer aborts rather than falling back through a substituted task directory',async t=>{
+test('writer aborts rather than falling back through a substituted task directory',needsOpenDirectoryRename(),async t=>{
  const f=await fixture(t);await unlink(f.artifact);
  setTaskArtifactLinkForTests(async()=>{await rename(f.taskDir,f.taskDir+'-old');await mkdir(f.taskDir);await writeFile(f.output,raw);});
  await assert.rejects(()=>writeWorkflowTaskArtifactBundle({taskDir:f.taskDir,rawOutput:raw}));

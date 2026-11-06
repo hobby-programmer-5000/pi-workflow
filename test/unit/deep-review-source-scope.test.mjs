@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync, symlinkSync, readFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pipeline from "../../workflows/deep-review/helpers/finding-pipeline.mjs";
+import { canCreateSymlinks } from "./helpers/platform-support.mjs";
 
 test("source coverage distinguishes unsupported scope and ranges without weakening containment", async () => {
   const root = mkdtempSync(join(tmpdir(), "review-scope-"));
@@ -11,7 +12,9 @@ test("source coverage distinguishes unsupported scope and ranges without weakeni
   try {
     writeFileSync(join(root, "source.txt"), "first\nexact quote\nlast\n");
     writeFileSync(join(outside, "source.txt"), "exact quote\n");
-    symlinkSync(join(outside, "source.txt"), join(root, "escape.txt"));
+    // Without symlink rights on win32 the escape case is left out, not faked.
+    const linked = canCreateSymlinks();
+    if (linked) symlinkSync(join(outside, "source.txt"), join(root, "escape.txt"));
     for (const [pointer, issue] of [
       ["source.txt:2-2", null],
       [join(root, "source.txt"), "repository-relative within the runtime cwd"],
@@ -21,7 +24,7 @@ test("source coverage distinguishes unsupported scope and ranges without weakeni
       ["escape.txt", "required source file is unavailable"],
       ["missing.txt", "required source file is unavailable"],
       ["source.txt:1", "content quote was not found"],
-    ]) {
+    ].filter(([pointer]) => linked || pointer !== "escape.txt")) {
       const result = await pipeline({
         sources: {
           triage: { reviewLenses: [{ id: "runtime", evidenceToInspect: [pointer] }] },

@@ -11,6 +11,7 @@ import evidenceGate from "../../skills/workflow-guide/scaffolds/support-partitio
 import claimGate from "../../workflows/deep-research/helpers/claim-evidence-gate.mjs";
 import specPartition from "../../workflows/spec-review/helpers/spec-review-pipeline.mjs";
 import specRender from "../../workflows/spec-review/helpers/render-spec-review-report.mjs";
+import { needsSymlinks } from "./helpers/platform-support.mjs";
 
 const schema = async (path) => JSON.parse(await readFile(new URL(`../../${path}`, import.meta.url), "utf8"));
 const candidate = (id) => ({ id, title: "Same title", severity: "medium", locations: [{ file: "source.ts", line: 1 }], evidenceQuotes: ["export const enabled = false;"], rationale: "reason", recommendedAction: "fix" });
@@ -77,7 +78,7 @@ test('scaffold evidence gate never upgrades missing identity accounting', async 
 });
 
 for (const mode of ['exact', 'mismatch', 'wrong-range', 'missing-file', 'symlink', 'remote', 'partial']) {
-  test(`research local quote grounding: ${mode}`, async (t) => {
+  test(`research local quote grounding: ${mode}`, mode === 'symlink' ? needsSymlinks() : {}, async (t) => {
     const cwd = await fixture(t);
     if (mode === 'symlink') await symlink(join(cwd, 'source.ts'), join(cwd, 'link.ts'));
     const file = mode === 'missing-file' ? 'absent.ts' : mode === 'symlink' ? 'link.ts' : 'source.ts';

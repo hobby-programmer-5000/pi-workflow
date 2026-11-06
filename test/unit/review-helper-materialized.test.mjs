@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import * as h from "./unit-test-support.mjs";
 import { loadWorkflowSpec } from "../../.tmp/unit/schema.js";
 import { validateJsonSchema } from "../../.tmp/unit/json-schema.js";
+import { needsSymlinks } from "./helpers/platform-support.mjs";
 
 const evidenceRoot = process.env.REVIEW_HELPER_EVIDENCE_DIR;
 const quote = "export const enabled = false;";
@@ -118,7 +119,7 @@ for (const mode of ["grounded", "drop-grounded", "legacy", "drop-unverified", "m
   }));
 }
 for (const mode of ["grounded", "symlink", "identity-mismatch"]) {
-  test(`actual scaffold scheduler/byte gate: ${mode}`, () => withRun("skills/workflow-guide/scaffolds/support-partition", `scaffold-${mode}`, async ({ cwd, step, complete }) => {
+  test(`actual scaffold scheduler/byte gate: ${mode}`, mode === "symlink" ? needsSymlinks() : {}, () => withRun("skills/workflow-guide/scaffolds/support-partition", `scaffold-${mode}`, async ({ cwd, step, complete }) => {
     let current = await step();
     const finding = { id: "CAND-1", title: "Local candidate", severity: "medium", locations: [{ file: "source.ts", line: 1, lineEnd: 1 }], evidenceQuotes: [quote], rationale: "Fixture", recommendedAction: "Inspect" };
     await complete(h.taskBySpec(current, "collect-candidates.main"), { candidates: [finding] });
